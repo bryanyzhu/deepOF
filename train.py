@@ -1,6 +1,6 @@
 import os,sys
 from sintelLoader import sintelLoader
-import warpFlow
+import wrapFlow
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 import numpy as np
@@ -12,7 +12,7 @@ from PIL import Image
 tf.app.flags.DEFINE_string('train_log_dir', '/tmp/data/',
                     'Directory where to write event logs.')
 
-tf.app.flags.DEFINE_integer('batch_size', 128, 'The number of images in each batch.')
+tf.app.flags.DEFINE_integer('batch_size', 10, 'The number of images in each batch.')
 
 tf.app.flags.DEFINE_integer('overwrite', True, 'Overwrite existing directory.')
 
@@ -61,14 +61,14 @@ class train:
 	sess = tf.Session()
         source_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
         target_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
-        loss_val,  preds  = warpFlow.Model(source_img, target_img)
+        loss_val,  flow_pred  = wrapFlow.Model(source_img, target_img)
         print('Finished building Network.')
 
         logging.info("Start Initializing Variabels.")
         # What about pre-traind initialized model params and deconv parms? 
         init = tf.initialize_all_variables()
-	total_loss = slim.losses.get_total_loss()
-   	train_op = tf.train.AdamOptimizer(0.001).minimize(total_loss)
+	total_loss = slim.losses.get_total_loss(add_regularization_losses=False)
+   	train_op = tf.train.AdamOptimizer(0.0001).minimize(total_loss)
 
         sess.run(tf.initialize_all_variables())
         for epoch in xrange(1, self.maxEpochs+1):
@@ -76,10 +76,18 @@ class train:
             for iteration in xrange(1, self.maxIterPerEpoch+1):
             	source, target = self.sintel.sampleTrain(self.batch_size)
 		if iteration%10 == 0:
-			loss_values, predictions = sess.run([loss_val, preds], feed_dict={source_img: source, target_img: target})
-			flowx = Image.fromarray(np.squeeze(predictions[0, :, :, 0]))
+			loss_values, flow_preds = sess.run([loss_val, flow_pred], feed_dict={source_img: source, target_img: target})
+			flowx = np.squeeze(flow_preds[0, :, :, 0])
+			print flowx.min(), flowx.max()
+			flowx = (flowx-flowx.min())/(flowx.max()-flowx.min())
+			flowx = np.uint8(flowx*255.0)
+			flowx = Image.fromarray(flowx)
 			flowx = flowx.convert("RGB")
-			flowy = Image.fromarray(np.squeeze(predictions[0, :, :, 1]))
+			flowy = np.squeeze(flow_preds[0, :, :, 1])
+			print flowy.min(), flowy.max()
+			flowy = (flowy-flowy.min())/(flowy.max()-flowy.min())
+			flowy = np.uint8(flowy*255.0)
+			flowy = Image.fromarray(flowy)
 			flowy = flowy.convert("RGB")
 			flowx.save(FLAGS.train_log_dir + "flowx_" + str(iteration) + ".jpeg")
 			flowy.save(FLAGS.train_log_dir + "flowy_" + str(iteration) + ".jpeg")
