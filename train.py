@@ -6,12 +6,13 @@ import tensorflow.contrib.slim as slim
 import numpy as np
 import logging
 import subprocess
+from PIL import Image
 
 
 tf.app.flags.DEFINE_string('train_log_dir', '/tmp/data/',
                     'Directory where to write event logs.')
 
-tf.app.flags.DEFINE_integer('batch_size', 1, 'The number of images in each batch.')
+tf.app.flags.DEFINE_integer('batch_size', 128, 'The number of images in each batch.')
 
 tf.app.flags.DEFINE_integer('overwrite', True, 'Overwrite existing directory.')
 
@@ -57,47 +58,32 @@ class train:
 	if not os.path.isdir(FLAGS.train_log_dir):
     		os.makedirs(FLAGS.train_log_dir, mode=0777)
 
-  	g = tf.Graph()
-  	with g.as_default():
-        	source, target = self.sintel.sampleTrain(self.batch_size)
-        	source_tf = tf.convert_to_tensor(source)
-        	target_tf = tf.convert_to_tensor(target)
+	sess = tf.Session()
+        source_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
+        target_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
+        loss_val,  preds  = warpFlow.Model(source_img, target_img)
+        print('Finished building Network.')
 
-        	preds = warpFlow.Model(source_tf, target_tf)
+        logging.info("Start Initializing Variabels.")
+        # What about pre-traind initialized model params and deconv parms? 
+        init = tf.initialize_all_variables()
+	total_loss = slim.losses.get_total_loss()
+   	train_op = tf.train.AdamOptimizer(0.001).minimize(total_loss)
 
-		total_loss = slim.losses.get_total_loss()
-
-    		# Configure the learning rate using an exponetial decay.
-    		decay_steps = int(len(self.sintel.trainList) / FLAGS.batch_size *
-                 	     FLAGS.num_epochs_per_decay)
-
-   		learning_rate = tf.train.exponential_decay(
-   		    FLAGS.learning_rate,
-   		    tf.Variable(1, trainable=False),
-   		    decay_steps,
-   		    FLAGS.learning_rate_decay_factor,
-   		    staircase=True)
-
-   		# Specify the optimization scheme:
-   		# optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-   		optimizer = tf.train.AdamOptimizer(learning_rate)
-
-   		# Set up the training tensor:
-		train_op = slim.learning.create_train_op(total_loss, optimizer)
-
-    		tf.scalar_summary('Total Loss', total_loss)
-    		tf.scalar_summary('Learning rate', learning_rate)
-    		tf.image_summary('inputs', tf.expand_dims(source_tf[0, :, :, :], 0))
-    		tf.image_summary('predictions', tf.expand_dims(preds[0, :, :, :], 0))
-    		tf.image_summary('ground_truth', tf.expand_dims(target_tf[0, :, :, :], 0))
-
-   		 # Run training.
-   		slim.learning.train(train_op,
-   		                     FLAGS.train_log_dir,
-   		                     number_of_steps=FLAGS.max_number_of_steps,
-				     graph = g, 
-   		                     save_summaries_secs=FLAGS.save_summaries_secs,
-   		                     save_interval_secs=FLAGS.save_interval_secs)
-
-
+        sess.run(tf.initialize_all_variables())
+        for epoch in xrange(1, self.maxEpochs+1):
+            print("Epoch %d: \r\n" % epoch)
+            for iteration in xrange(1, self.maxIterPerEpoch+1):
+            	source, target = self.sintel.sampleTrain(self.batch_size)
+		if iteration%10 == 0:
+			loss_values, predictions = sess.run([loss_val, preds], feed_dict={source_img: source, target_img: target})
+			flowx = Image.fromarray(np.squeeze(predictions[0, :, :, 0]))
+			flowx = flowx.convert("RGB")
+			flowy = Image.fromarray(np.squeeze(predictions[0, :, :, 1]))
+			flowy = flowy.convert("RGB")
+			flowx.save(FLAGS.train_log_dir + "flowx_" + str(iteration) + ".jpeg")
+			flowy.save(FLAGS.train_log_dir + "flowy_" + str(iteration) + ".jpeg")
+			assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
+	             	print("Iter %04d: Loss %2.4f \r\n" % (iteration, loss_values))
+		train_op.run(feed_dict={source_img: source, target_img: target}, session=sess)
 

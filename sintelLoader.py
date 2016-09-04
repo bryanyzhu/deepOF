@@ -1,6 +1,7 @@
 import os, sys
 from random import shuffle
 import numpy as np
+import tensorflow as tf
 import cv2
 
 class sintelLoader:
@@ -50,11 +51,8 @@ class sintelLoader:
             next_img = img_pair[1]
             source = cv2.imread(os.path.join(self.img_path, prev_img), cv2.IMREAD_COLOR)
             target = cv2.imread(os.path.join(self.img_path, next_img), cv2.IMREAD_COLOR)
-            # Downsampled by half
             source_list.append(cv2.resize(source, (self.image_size[1], self.image_size[0])))
             target_list.append(cv2.resize(target, (self.image_size[1], self.image_size[0])))
-        source_list = np.array(source_list, dtype=np.float32)
-        target_list = np.array(target_list, dtype=np.float32)
         return source_list, target_list
         # Adding the channel dimension if images are read in grayscale
         # return np.expand_dims(source_list, axis = 3), np.expand_dims(target_list, axis = 3)          
