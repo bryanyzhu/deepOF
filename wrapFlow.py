@@ -41,7 +41,7 @@ def Model(inputs, outputs):
     
     channels = 40
  
-    fc8 = slim.fully_connected(dropout7, channels*4*5, scope='d5')
+    fc8 = slim.fully_connected(dropout7, channels*8*10, scope='d5')
     bn_pool1 = slim.batch_norm(pool1, scope='bn_pool1')
     bn_pool2 = slim.batch_norm(pool2, scope='bn_pool2')
     bn_pool3 = slim.batch_norm(pool3, scope='bn_pool3')
@@ -51,7 +51,7 @@ def Model(inputs, outputs):
     d2 = slim.conv2d(bn_pool2, channels, [3, 3])
     d3 = slim.conv2d(bn_pool3, channels, [3, 3])
     d4 = slim.conv2d(bn_pool4, channels, [3, 3])
-    d5 = tf.reshape(fc8, [-1, 4, 5, channels])
+    d5 = tf.reshape(fc8, [-1, 8, 10, channels])
 
     scale = 1
     d1 = slim.conv2d_transpose(d1, channels, [2*scale, 2*scale], stride=scale)
@@ -125,7 +125,7 @@ def Model(inputs, outputs):
     loss = tf.contrib.losses.sum_of_squares(preds, outputs)
     slim.losses.add_loss(loss)
     tf.scalar_summary('Sum of squares loss', loss)
-  return  loss, tf.reshape(flows,[shape[0], shape[1], shape[2], 2])
+  return  loss, tf.reshape(flows,[shape[0], shape[1], shape[2], 2]), preds
 
 
 
