@@ -95,39 +95,32 @@ def Model(inputs, outputs):
         for c in range(shape[3]):
 	  # predicted positions
 	  pos1 = (floor_flows[b, :, 0] + pos_x)*shape[2] + (floor_flows[b, :, 1] + pos_y)
-	 # pos2 = (floor_flows[b, :, 0] + pos_x + 1)*shape[2] + (floor_flows[b, :, 1] + pos_y)
-	 #pos3 = (floor_flows[b, :, 0] + pos_x)*shape[2] + (floor_flows[b, :, 1] + pos_y + 1)
-	 # pos4 = (floor_flows[b, :, 0] + pos_x + 1)*shape[2] + (floor_flows[b, :, 1] + pos_y + 1)
+	  pos2 = (floor_flows[b, :, 0] + pos_x + 1)*shape[2] + (floor_flows[b, :, 1] + pos_y)
+	  pos3 = (floor_flows[b, :, 0] + pos_x)*shape[2] + (floor_flows[b, :, 1] + pos_y + 1)
+	  pos4 = (floor_flows[b, :, 0] + pos_x + 1)*shape[2] + (floor_flows[b, :, 1] + pos_y + 1)
 	  
-          # convert the positions into one-hot vectors 	
-	  b1 = tf.transpose(tf.one_hot(pos1, shape[1]*shape[2]))
-	  #b2 = tf.transpose(tf.one_hot(pos2, shape[1]*shape[2]))
-	  #b3 = tf.transpose(tf.one_hot(pos3, shape[1]*shape[2]))
-	  #b4 = tf.transpose(tf.one_hot(pos4, shape[1]*shape[2]))
-
 	  # get the corresponding pixels
-          pixel1 = tf.matmul(tf.expand_dims(inputs[b, :, c], 0), b1)
-          #pixel2 = tf.matmul(tf.expand_dims(inputs[b, :, c], 0), b2)
-          #pixel3 = tf.matmul(tf.expand_dims(inputs[b, :, c], 0), b3)
-          #pixel4 = tf.matmul(tf.expand_dims(inputs[b, :, c], 0), b4)
+	  pixel1 = tf.gather(inputs[b, :, c], pos1)
+	  pixel2 = tf.gather(inputs[b, :, c], pos2)
+	  pixel3 = tf.gather(inputs[b, :, c], pos3)
+	  pixel4 = tf.gather(inputs[b, :, c], pos4)
 	
 	  # linear interpretation of these predicted pixels
 	  # remove the linear interpretation because of OOM issue. 
-	  #xw = weights_flows[b, :, 0]
-	  #yw = weights_flows[b, :, 1]
-          #img = tf.mul(pixel1, (1-xw)*(1-yw)) + tf.mul(pixel2, xw*(1-yw)) + \
-          #	  tf.mul(pixel3, (1-xw)*yw) + tf.mul(pixel4, xw*yw) 
-          #img = tf.mul(pixel1, (1-yw)) + tf.mul(pixel3, yw)
+	  xw = weights_flows[b, :, 0]
+	  yw = weights_flows[b, :, 1]
+          img = tf.mul(pixel1, (1-xw)*(1-yw)) + tf.mul(pixel2, xw*(1-yw)) + \
+          	  tf.mul(pixel3, (1-xw)*yw) + tf.mul(pixel4, xw*yw) 
+          img = tf.mul(pixel1, (1-yw)) + tf.mul(pixel3, yw)
           channel.append(pixel1)
         batch.append(tf.reshape(tf.transpose(tf.pack(channel)), [shape[1], shape[2], shape[3]]))
     preds = tf.pack(batch)
 
 
-
     loss = tf.contrib.losses.sum_of_squares(preds, outputs)
     slim.losses.add_loss(loss)
     tf.scalar_summary('Sum of squares loss', loss)
-  return  preds
+  return  loss, preds
 
 
 
