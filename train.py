@@ -18,8 +18,6 @@ tf.app.flags.DEFINE_integer('batch_size', 10, 'The number of images in each batc
 
 tf.app.flags.DEFINE_integer('overwrite', True, 'Overwrite existing directory.')
 
-tf.app.flags.DEFINE_integer('save_summaries_secs', 10,
-                     'The frequency of which summaries are saved, in seconds.')
 
 tf.app.flags.DEFINE_integer('save_interval_epoch', 10,
                      'The frequency with which the model is saved, in epoch.')
@@ -179,6 +177,7 @@ class train:
                     gt_2 = target[0, :, :, :].squeeze()
                     cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_gt2" + ".jpeg", gt_2)
 
+
                     assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
                     print("Iter %04d: Loss %2.4f \r\n" % (iteration, loss_values))
                 train_op.run(feed_dict = {source_img: source, target_img: target, learning_rate: lr}, session = sess)
@@ -190,3 +189,6 @@ class train:
                 print("Save to " +  FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
                 saver.save(sess, FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
 
+	    if epoch%FLAGS.save_interval_epoch == 0:
+		print("Save to " +  FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
+		saver.save(sess, FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
