@@ -189,6 +189,3 @@ class train:
                 print("Save to " +  FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
                 saver.save(sess, FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
 
-	    if epoch%FLAGS.save_interval_epoch == 0:
-		print("Save to " +  FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
-		saver.save(sess, FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
