@@ -37,9 +37,10 @@ class sintelLoader:
                 data.append((prevFrame, nextFrame))
         return data
 
-    def sampleTrain(self, batch_size):
+    def sampleTrain(self, batch_size, batch_id):
         assert batch_size > 0, 'we need a batch size larger than 0'
-        batchSampleIdxs = np.random.choice(len(self.trainList), batch_size)
+        # batchSampleIdxs = np.random.choice(len(self.trainList), batch_size)
+        batchSampleIdxs = range((batch_id-1)*batch_size, batch_id*batch_size)
         return self.hookTrainData(batchSampleIdxs)
 
     def hookTrainData(self, sampleIdxs):
@@ -51,9 +52,9 @@ class sintelLoader:
             next_img = img_pair[1]
             source = cv2.imread(os.path.join(self.img_path, prev_img), cv2.IMREAD_COLOR)
             target = cv2.imread(os.path.join(self.img_path, next_img), cv2.IMREAD_COLOR)
-            source_list.append(cv2.resize(source, (self.image_size[1], self.image_size[0])))
-            target_list.append(cv2.resize(target, (self.image_size[1], self.image_size[0])))
-        return source_list, target_list
+            source_list.append(np.expand_dims(cv2.resize(source, (self.image_size[1], self.image_size[0])), 0))
+            target_list.append(np.expand_dims(cv2.resize(target, (self.image_size[1], self.image_size[0])) ,0))
+        return np.concatenate(source_list, axis=0), np.concatenate(target_list, axis=0)
         # Adding the channel dimension if images are read in grayscale
         # return np.expand_dims(source_list, axis = 3), np.expand_dims(target_list, axis = 3)          
 
