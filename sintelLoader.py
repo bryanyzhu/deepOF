@@ -93,7 +93,7 @@ class sintelLoader:
         assert batch_size > 0, 'we need a batch size larger than 0'
         # batchSampleIdxs = np.random.choice(len(self.valList), batch_size)
         batchSampleIdxs = range((batch_id-1)*batch_size, batch_id*batch_size)
-        return self.hookValData(batchSampleIdxs)
+        return (self.hookValData(batchSampleIdxs), batchSampleIdxs)
 
     def hookValData(self, sampleIdxs):
         assert len(sampleIdxs) > 0, 'we need a non-empty batch list'

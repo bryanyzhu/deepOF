@@ -9,6 +9,7 @@ import subprocess
 from PIL import Image
 import cv2
 import math
+import utils as utils
 
 
 tf.app.flags.DEFINE_string('train_log_dir', '/tmp/data_1/',
@@ -152,9 +153,10 @@ class train:
                     loss_ps, loss_rs, flow_preds, frame_preds = sess.run([loss_p, loss_r, flow_pred, frame_pred], feed_dict={source_img: source, target_img: target})
                     flow_error = ((flow_preds - flow) ** 2).mean(axis=None)/self.batch_size
                     assert not np.isnan(loss_ps) and not np.isnan(loss_rs), 'Model diverged with loss = NaN'
-                    print("------Training: Epoch %03d Iter %04d: Prediction Loss %2.4f Reconstruction Loss %2.4f Flow MSE %4.4f \r\n" 
+                    print("---Training: Epoch %03d Iter %04d: Prediction Loss %2.4f Reconstruction Loss %2.4f Flow MSE %4.4f \r\n" 
                         % (epoch, iteration, loss_ps, loss_rs, flow_error))
                 if iteration == int(math.floor(self.maxIterPerEpoch/2)) or iteration == self.maxIterPerEpoch:
+                # if True:
                     self.evaluateNet(epoch, iteration, sess)
 
             if epoch % FLAGS.num_epochs_per_decay == 0:
@@ -179,32 +181,52 @@ class train:
         maxTestIter = int(math.floor(len(self.sintel.valList)/testBatchSize))
         totalPLoss = 0
         totalRLoss = 0
-        flow_error = 0
+        flow_p = []
+        flow_gt = []
         for iteration in xrange(1, maxTestIter+1):
-            source, target, flow = self.sintel.sampleVal(testBatchSize, iteration)
+            testBatch = self.sintel.sampleVal(testBatchSize, iteration)
+            source, target, flow = testBatch[0]
+            imgPath = testBatch[1][0]
             loss_ps, loss_rs, flow_preds, frame_preds = sess.run([loss_p, loss_r, flow_pred, frame_pred], feed_dict={source_img: source, target_img: target})
             # assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
-            flow_error += ((flow_preds - flow) ** 2).mean(axis=None)/testBatchSize
             totalPLoss += loss_ps
             totalRLoss += loss_rs
+            flow_p.append(flow_preds)
+            flow_gt.append(flow)
 
             # Visualize
             if iteration % 4 == 0:
-                gt_1 = source[0, :, :, :].squeeze()
-                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_gt1" + ".jpeg", gt_1)
-                gt_2 = target[0, :, :, :].squeeze()
-                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_gt2" + ".jpeg", gt_2)
-                flowx = np.squeeze(flow_preds[0, :, :, 0])
-                flowx = (flowx-flowx.min())/(flowx.max()-flowx.min())
-                flowx = np.uint8(flowx*255.0)
-                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_flowx" + ".jpeg", flowx)
-                flowy = np.squeeze(flow_preds[0, :, :, 1])
-                flowy = (flowy-flowy.min())/(flowy.max()-flowy.min())
-                flowy = np.uint8(flowy*255.0)
-                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_flowy" + ".jpeg", flowy)
+                if epoch == 1:
+                    gt_1 = source[0, :, :, :].squeeze()
+                    cv2.imwrite(FLAGS.train_log_dir + self.sintel.valList[imgPath][0].replace("/", "-")[:-4] + ".jpeg", gt_1)
+                    gt_2 = target[0, :, :, :].squeeze()
+                    cv2.imwrite(FLAGS.train_log_dir + self.sintel.valList[imgPath][1].replace("/", "-")[:-4] + ".jpeg", gt_2)
+                    GTflowColor = utils.flowToColor(flow[0,:,:,:].squeeze())
+                    cv2.imwrite(FLAGS.train_log_dir + self.sintel.valList[imgPath][0].replace("/", "-")[:-4] + "_gt_flow.jpeg", GTflowColor)
 
-        print("******Test: Epoch %03d Iter %04d: Prediction Loss %2.4f Reconstruction Loss %2.4f Flow MSE %4.4f \r\n" 
-            % (epoch, trainIter, totalPLoss/maxTestIter, totalRLoss/maxTestIter, flow_error/maxTestIter))
+                # flowx = np.squeeze(flow_preds[0, :, :, 0])
+                # flowx = (flowx-flowx.min())/(flowx.max()-flowx.min())
+                # flowx = np.uint8(flowx*255.0)
+                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowx" + ".jpeg", flowx)
+                # flowy = np.squeeze(flow_preds[0, :, :, 1])
+                # flowy = (flowy-flowy.min())/(flowy.max()-flowy.min())
+                # flowy = np.uint8(flowy*255.0)
+                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowy" + ".jpeg", flowy)
+
+                flowColor = utils.flowToColor(flow_preds[0,:,:,:].squeeze())
+                # print flowColor.max(), flowColor.min(), flowColor.mean()
+                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor" + ".jpeg", flowColor)
+
+        # Calculate endpoint error
+        AEE = utils.flow_ee(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
+        # EE_tot, AEE = utils.flow_ee(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
+
+        # Calculate anguar error, maybe not necessary
+        AAE = utils.flow_ae(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
+        # AE_tot, AAE = utils.flow_ae(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
+
+        print("***Test: Epoch %03d Iter %04d: Pred Loss %2.4f Recons Loss %2.4f AEE %4.4f AAE %4.4f \r\n" 
+            % (epoch, trainIter, totalPLoss/maxTestIter, totalRLoss/maxTestIter, AEE, AAE))
 
         
 
