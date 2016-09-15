@@ -80,10 +80,11 @@ def Model(inputs, outputs):
 
         shape = inputs.get_shape()
         shape = [int(dim) for dim in shape]
-        inputs = tf.reshape(inputs, [shape[0], -1, shape[3]])
+        inputs_flat = tf.reshape(inputs, [shape[0], -1, shape[3]])
+        outputs_flat = tf.reshape(outputs, [shape[0], -1, shape[3]])
         flows = tf.reshape(flows, [shape[0], -1, 2])
         floor_flows = tf.to_int32(tf.floor(flows))
-        weights_flows = flows-tf.floor(flows)
+        weights_flows = flows - tf.floor(flows)
 
         pos_x = tf.range(shape[1])
         pos_x = tf.tile(tf.expand_dims(pos_x, 1), [1, shape[2]])
@@ -92,6 +93,7 @@ def Model(inputs, outputs):
         pos_y = tf.tile(tf.expand_dims(pos_y, 0), [shape[1], 1])
         pos_y = tf.reshape(pos_y, [-1])
 
+        # For predicting the next frame
         batch = []
         for b in range(shape[0]):
             channel = []
@@ -109,10 +111,10 @@ def Model(inputs, outputs):
                 pos4 = tf.clip_by_value(pos4, zero, shape[1]*shape[2])
 
                 # get the corresponding pixels
-                pixel1 = tf.gather(inputs[b, :, c], pos1)
-                pixel2 = tf.gather(inputs[b, :, c], pos2)
-                pixel3 = tf.gather(inputs[b, :, c], pos3)
-                pixel4 = tf.gather(inputs[b, :, c], pos4)
+                pixel1 = tf.gather(inputs_flat[b, :, c], pos1)
+                pixel2 = tf.gather(inputs_flat[b, :, c], pos2)
+                pixel3 = tf.gather(inputs_flat[b, :, c], pos3)
+                pixel4 = tf.gather(inputs_flat[b, :, c], pos4)
 
                 # linear interpretation of these predicted pixels
                 # remove the linear interpretation because of OOM issue. 
@@ -124,11 +126,46 @@ def Model(inputs, outputs):
             batch.append(tf.reshape(tf.transpose(tf.pack(channel)), [shape[1], shape[2], shape[3]]))
         preds = tf.pack(batch)
 
+        # TODO: For reconstructing the previous frame
+        batch_prev = []
+        for b in range(shape[0]):
+            channel = []
+            for c in range(shape[3]):
+                # predicted positions
+                pos1 = (floor_flows[b, :, 0] + pos_x)*shape[2] + (floor_flows[b, :, 1] + pos_y)
+                pos2 = (floor_flows[b, :, 0] + pos_x + 1)*shape[2] + (floor_flows[b, :, 1] + pos_y)
+                pos3 = (floor_flows[b, :, 0] + pos_x)*shape[2] + (floor_flows[b, :, 1] + pos_y + 1)
+                pos4 = (floor_flows[b, :, 0] + pos_x + 1)*shape[2] + (floor_flows[b, :, 1] + pos_y + 1)
 
-        loss = tf.contrib.losses.sum_of_squares(preds, outputs)
-        slim.losses.add_loss(loss)
-        tf.scalar_summary('Sum of squares loss', loss)
-    return  loss, tf.reshape(flows,[shape[0], shape[1], shape[2], 2]), preds
+                zero = tf.zeros([], dtype='int32')
+                pos1 = tf.clip_by_value(pos1, zero, shape[1]*shape[2])
+                pos2 = tf.clip_by_value(pos2, zero, shape[1]*shape[2])
+                pos3 = tf.clip_by_value(pos3, zero, shape[1]*shape[2])
+                pos4 = tf.clip_by_value(pos4, zero, shape[1]*shape[2])
+
+                # get the corresponding pixels
+                pixel1 = tf.gather(outputs_flat[b, :, c], pos1)
+                pixel2 = tf.gather(outputs_flat[b, :, c], pos2)
+                pixel3 = tf.gather(outputs_flat[b, :, c], pos3)
+                pixel4 = tf.gather(outputs_flat[b, :, c], pos4)
+
+                # linear interpretation of these predicted pixels
+                # remove the linear interpretation because of OOM issue. 
+                xw = weights_flows[b, :, 0]
+                yw = weights_flows[b, :, 1]
+                img = tf.mul(pixel1, (1-xw)*(1-yw)) + tf.mul(pixel2, xw*(1-yw)) + \
+                      tf.mul(pixel3, (1-xw)*yw) + tf.mul(pixel4, xw*yw) 
+                channel.append(img)
+            batch_prev.append(tf.reshape(tf.transpose(tf.pack(channel)), [shape[1], shape[2], shape[3]]))
+        reconstructs = tf.pack(batch_prev)
+
+        loss_predict = tf.contrib.losses.sum_of_squares(preds, outputs)
+        loss_reconstruct = tf.contrib.losses.sum_of_squares(reconstructs, inputs)
+        slim.losses.add_loss(loss_predict)
+        slim.losses.add_loss(loss_reconstruct)
+        tf.scalar_summary('Sum of squares prediction loss', loss_predict)
+        tf.scalar_summary('Sum of squares reconstruction loss', loss_reconstruct)
+    return  loss_predict, loss_reconstruct, tf.reshape(flows,[shape[0], shape[1], shape[2], 2]), preds
 
 
 

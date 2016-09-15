@@ -11,13 +11,12 @@ import cv2
 import math
 
 
-tf.app.flags.DEFINE_string('train_log_dir', '/tmp/data/',
+tf.app.flags.DEFINE_string('train_log_dir', '/tmp/data_1/',
                     'Directory where to write event logs.')
 
-tf.app.flags.DEFINE_integer('batch_size', 10, 'The number of images in each batch.')
+tf.app.flags.DEFINE_integer('batch_size', 8, 'The number of images in each batch.')
 
 tf.app.flags.DEFINE_integer('overwrite', True, 'Overwrite existing directory.')
-
 
 tf.app.flags.DEFINE_integer('save_interval_epoch', 10,
                      'The frequency with which the model is saved, in epoch.')
@@ -64,9 +63,9 @@ class train:
             if i <= 25:
                 if i in cutLayerNum:
                     offNum += 1
-                    print i, k, np.shape(weights[k]), "not included in deep3D model"
+                    # print i, k, np.shape(weights[k]), "not included in deep3D model"
                 else:
-                    print i, k, np.shape(weights[k])
+                    # print i, k, np.shape(weights[k])
                     if i == 0:
                         sess.run(self.VGG_init_vars[i-offNum].assign(np.repeat(weights[k],2,axis=2)))
                     else:
@@ -86,8 +85,7 @@ class train:
         weights = np.zeros(f_shape)
         for i in range(f_shape[2]):
             weights[:, :, i, i] = bilinear
-        sess.run(var.assign(weights))
-        
+        sess.run(var.assign(weights))        
 
     def trainNet(self, batch_size):
 
@@ -97,7 +95,7 @@ class train:
         sess = tf.Session()
         source_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
         target_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
-        loss_val,  flow_pred, frame_pred  = wrapFlow.Model(source_img, target_img)
+        loss_p,  loss_r, flow_pred, frame_pred  = wrapFlow.Model(source_img, target_img)
         print('Finished building Network.')
 
         logging.info("Start Initializing Variabels.")
@@ -114,24 +112,24 @@ class train:
         self.VGG_init_vars = [var for var in model_vars if (var.name).startswith('conv')]
         self.deconv_bilinearInit_vars = [var for var in model_vars if (var.name).startswith('deconv')]  
 
-        VGG16Init = True
-        bilinearInit = True
+        VGG16Init = False
+        bilinearInit = False
 
-        # Pre-trained VGG16 model for initialization
+        # Use pre-trained VGG16 model to initialize conv filters
         if VGG16Init:
             VGG16modelPath = "vgg16_weights.npz"
             if not os.path.exists(VGG16modelPath):
                 modelUrl = "http://www.cs.toronto.edu/~frossard/vgg16/vgg16_weights.npz"
                 self.downloadModel(modelUrl)
             self.load_VGG16_weights(VGG16modelPath, sess)
-            print("-----Initialized done with VGG16 pre-trained model------")
+            print("-----Done initializing conv filters with VGG16 pre-trained model------")
 
         # Use bilinear upsampling to initialize deconv filters
         if bilinearInit:
             for var in self.deconv_bilinearInit_vars:
                 if "weights" in var.name:
                     self.load_deconv_weights(var, sess)
-            print("-----Initialized done with bilinear upsampling------")
+            print("-----Done initializing deconv filters with bilinear upsampling------")
     
         saver = tf.train.Saver()
         ckpt = tf.train.get_checkpoint_state(FLAGS.train_log_dir)
@@ -140,47 +138,24 @@ class train:
             print("Restore from " +  ckpt.model_checkpoint_path)
             saver.restore(sess, ckpt.model_checkpoint_path)
         
+        display = 20        # number of iterations to display training log
         for epoch in xrange(1, self.maxEpochs+1):
             print("Epoch %d: \r\n" % epoch)
             print("Learning Rate %f: \r\n" % lr)
 
             for iteration in xrange(1, self.maxIterPerEpoch+1):
-                source, target = self.sintel.sampleTrain(self.batch_size, iteration)
-
-                if iteration % 40 == 0:
-                    loss_values, flow_preds, frame_preds = sess.run([loss_val, flow_pred, frame_pred], feed_dict={source_img: source, target_img: target})
-                    flowx = np.squeeze(flow_preds[0, :, :, 0])
-                    print flowx.min(), flowx.max()
-                    flowx = (flowx-flowx.min())/(flowx.max()-flowx.min())
-                    flowx = np.uint8(flowx*255.0)
-                    flowx = Image.fromarray(flowx)
-                    flowx = flowx.convert("RGB")
-                    flowy = np.squeeze(flow_preds[0, :, :, 1])
-                    print flowy.min(), flowy.max()
-                    flowy = (flowy-flowy.min())/(flowy.max()-flowy.min())
-                    flowy = np.uint8(flowy*255.0)
-                    flowy = Image.fromarray(flowy)
-                    flowy = flowy.convert("RGB")
-                    
-                    pred = np.squeeze(frame_preds[0, :, :, :])
-                    print pred.min(), pred.max()
-                    pred = np.uint8(pred)
-                    pred = Image.fromarray(pred)
-                    pred = pred.convert("RGB")
-
-                    flowx.save(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_flowx" + ".jpeg")
-                    flowy.save(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_flowy" + ".jpeg")
-                    pred.save(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_pred" + ".jpeg")
-
-                    gt_1 = source[0, :, :, :].squeeze()
-                    cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_gt1" + ".jpeg", gt_1)
-                    gt_2 = target[0, :, :, :].squeeze()
-                    cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_gt2" + ".jpeg", gt_2)
-
-
-                    assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
-                    print("Iter %04d: Loss %2.4f \r\n" % (iteration, loss_values))
+                # source, target = self.sintel.sampleTrain(self.batch_size, iteration)      # last several images will be missing
+                source, target, flow = self.sintel.sampleTrain(self.batch_size)
                 train_op.run(feed_dict = {source_img: source, target_img: target, learning_rate: lr}, session = sess)
+                if iteration % display == 0:
+                # if iteration == 1:
+                    loss_ps, loss_rs, flow_preds, frame_preds = sess.run([loss_p, loss_r, flow_pred, frame_pred], feed_dict={source_img: source, target_img: target})
+                    flow_error = ((flow_preds - flow) ** 2).mean(axis=None)/self.batch_size
+                    assert not np.isnan(loss_ps) and not np.isnan(loss_rs), 'Model diverged with loss = NaN'
+                    print("------Training: Epoch %03d Iter %04d: Prediction Loss %2.4f Reconstruction Loss %2.4f Flow MSE %4.4f \r\n" 
+                        % (epoch, iteration, loss_ps, loss_rs, flow_error))
+                if iteration == int(math.floor(self.maxIterPerEpoch/2)) or iteration == self.maxIterPerEpoch:
+                    self.evaluateNet(epoch, iteration, sess)
 
             if epoch % FLAGS.num_epochs_per_decay == 0:
                 lr *= FLAGS.learning_rate_decay_factor
@@ -189,3 +164,80 @@ class train:
                 print("Save to " +  FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
                 saver.save(sess, FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
 
+
+    def evaluateNet(self, epoch, trainIter, sess):
+        # For Sintel, the batch size should be 7, so that all validation images are covered.
+        testBatchSize = 7
+        source_img = tf.placeholder(tf.float32, [testBatchSize, self.image_size[0], self.image_size[1], 3])
+        target_img = tf.placeholder(tf.float32, [testBatchSize, self.image_size[0], self.image_size[1], 3])
+
+        # Don't know if this is safe to set all variables reuse=True
+        # But because of different batch size, I don't know how to evaluate the model on validation data
+        tf.get_variable_scope().reuse_variables()
+
+        loss_p, loss_r, flow_pred, frame_pred  = wrapFlow.Model(source_img, target_img)
+        maxTestIter = int(math.floor(len(self.sintel.valList)/testBatchSize))
+        totalPLoss = 0
+        totalRLoss = 0
+        flow_error = 0
+        for iteration in xrange(1, maxTestIter+1):
+            source, target, flow = self.sintel.sampleVal(testBatchSize, iteration)
+            loss_ps, loss_rs, flow_preds, frame_preds = sess.run([loss_p, loss_r, flow_pred, frame_pred], feed_dict={source_img: source, target_img: target})
+            # assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
+            flow_error += ((flow_preds - flow) ** 2).mean(axis=None)/testBatchSize
+            totalPLoss += loss_ps
+            totalRLoss += loss_rs
+
+            # Visualize
+            if iteration % 4 == 0:
+                gt_1 = source[0, :, :, :].squeeze()
+                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_gt1" + ".jpeg", gt_1)
+                gt_2 = target[0, :, :, :].squeeze()
+                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_gt2" + ".jpeg", gt_2)
+                flowx = np.squeeze(flow_preds[0, :, :, 0])
+                flowx = (flowx-flowx.min())/(flowx.max()-flowx.min())
+                flowx = np.uint8(flowx*255.0)
+                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_flowx" + ".jpeg", flowx)
+                flowy = np.squeeze(flow_preds[0, :, :, 1])
+                flowy = (flowy-flowy.min())/(flowy.max()-flowy.min())
+                flowy = np.uint8(flowy*255.0)
+                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_flowy" + ".jpeg", flowy)
+
+        print("******Test: Epoch %03d Iter %04d: Prediction Loss %2.4f Reconstruction Loss %2.4f Flow MSE %4.4f \r\n" 
+            % (epoch, trainIter, totalPLoss/maxTestIter, totalRLoss/maxTestIter, flow_error/maxTestIter))
+
+        
+
+
+
+            # flowx = np.squeeze(flow_preds[0, :, :, 0])
+            # print flowx.min(), flowx.max()
+            # flowx = (flowx-flowx.min())/(flowx.max()-flowx.min())
+            # flowx = np.uint8(flowx*255.0)
+            # flowx = Image.fromarray(flowx)
+            # flowx = flowx.convert("RGB")
+            # flowy = np.squeeze(flow_preds[0, :, :, 1])
+            # print flowy.min(), flowy.max()
+            # flowy = (flowy-flowy.min())/(flowy.max()-flowy.min())
+            # flowy = np.uint8(flowy*255.0)
+            # flowy = Image.fromarray(flowy)
+            # flowy = flowy.convert("RGB")
+
+            # pred = np.squeeze(frame_preds[0, :, :, :])
+            # print pred.min(), pred.max()
+            # pred = np.uint8(pred)
+            # pred = Image.fromarray(pred)
+            # pred = pred.convert("RGB")
+
+            # flowx.save(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_flowx" + ".jpeg")
+            # flowy.save(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_flowy" + ".jpeg")
+            # pred.save(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_pred" + ".jpeg")
+
+            # gt_1 = source[0, :, :, :].squeeze()
+            # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_gt1" + ".jpeg", gt_1)
+            # gt_2 = target[0, :, :, :].squeeze()
+            # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_gt2" + ".jpeg", gt_2)
+
+
+            
+            # print("Iter %04d: Loss %2.4f \r\n" % (iteration, loss_values))
