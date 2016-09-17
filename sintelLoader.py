@@ -84,7 +84,8 @@ class sintelLoader:
             flow = utils.readFlow(os.path.join(self.data_path, 'training', "flow", (prev_img[:-4] + ".flo")))
             source_list.append(np.expand_dims(cv2.resize(source, (self.image_size[1], self.image_size[0])), 0))
             target_list.append(np.expand_dims(cv2.resize(target, (self.image_size[1], self.image_size[0])) ,0))
-            flow_gt.append(np.expand_dims(cv2.resize(flow, (self.image_size[1], self.image_size[0])), 0))
+            # flow_gt.append(np.expand_dims(cv2.resize(flow, (self.image_size[1], self.image_size[0])), 0))
+            flow_gt.append(np.expand_dims(flow, 0))
         return np.concatenate(source_list, axis=0), np.concatenate(target_list, axis=0), np.concatenate(flow_gt, axis=0)
         # Adding the channel dimension if images are read in grayscale
         # return np.expand_dims(source_list, axis = 3), np.expand_dims(target_list, axis = 3)  
@@ -107,7 +108,8 @@ class sintelLoader:
             flow = utils.readFlow(os.path.join(self.data_path, 'training', "flow", (prev_img[:-4] + ".flo")))
             source_list.append(np.expand_dims(cv2.resize(source, (self.image_size[1], self.image_size[0])), 0))
             target_list.append(np.expand_dims(cv2.resize(target, (self.image_size[1], self.image_size[0])) ,0))
-            flow_gt.append(np.expand_dims(cv2.resize(flow, (self.image_size[1], self.image_size[0])), 0))
+            # flow_gt.append(np.expand_dims(cv2.resize(flow, (self.image_size[1], self.image_size[0])), 0))
+            flow_gt.append(np.expand_dims(flow, 0))
         return np.concatenate(source_list, axis=0), np.concatenate(target_list, axis=0), np.concatenate(flow_gt, axis=0)       
 
             

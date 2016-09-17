@@ -3,7 +3,8 @@ import argparse
 from train import train
 
 def deepOF(data_path):
-	image_size = [256, 320]
+	image_size = [256, 512]
+	crop_size = [224, 480]
 	split = 0.8
 	passKey = 'final'		# clean or final
 	train(data_path, image_size, split, passKey)

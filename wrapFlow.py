@@ -77,6 +77,8 @@ def Model(inputs, outputs):
         shape = [int(dim) for dim in shape]
         inputs_flat = tf.reshape(inputs, [shape[0], -1, shape[3]])
         outputs_flat = tf.reshape(outputs, [shape[0], -1, shape[3]])
+
+        # TODO: Median filtering the flow 
         flows = tf.reshape(flows, [shape[0], -1, 2])
         floor_flows = tf.to_int32(tf.floor(flows))
         weights_flows = flows - tf.floor(flows)
@@ -134,14 +136,35 @@ def Model(inputs, outputs):
                 channel_1.append(img_1)
             batch.append(tf.transpose(tf.pack(channel)))
             batch_1.append(tf.transpose(tf.pack(channel_1)))
-        preds= tf.pack(batch)
+        preds = tf.pack(batch)
         reconstructs = tf.pack(batch_1)
-
 
         loss_predict = tf.contrib.losses.sum_of_squares(preds, outputs_flat)
         loss_reconstruct = tf.contrib.losses.sum_of_squares(reconstructs, inputs_flat)
-        slim.losses.add_loss(tf.minimum(loss_predict, loss_reconstruct))
-    return  loss_predict, loss_reconstruct, tf.reshape(flows,[shape[0], shape[1], shape[2], 2]), tf.reshape(preds, [shape[0], shape[1], shape[2], shape[3]])
+        # slim.losses.add_loss(tf.minimum(loss_predict, loss_reconstruct))
+
+        # Charbonnier penalty function
+        epsilon = 0.001
+        alpha_c = 0.45
+        loss_min = tf.minimum(loss_predict, loss_reconstruct)
+        Charbonnier = tf.pow(loss_min + tf.square(tf.constant(epsilon, name='epsilon')), tf.constant(alpha_c, name='alpha_c'))
+
+        # Smoothness loss
+        alpha_s = 0.45
+        flow_vis = tf.reshape(flows,[shape[0], shape[1], shape[2], 2])
+        flowx = flow_vis[:,:,:,0]
+        flowy = flow_vis[:,:,:,1]
+        a = tf.reduce_mean(tf.pow(tf.square(tf.sub(flowx[:, :-1, :], flowx[:, 1:, :])) + tf.square(tf.constant(epsilon)), tf.constant(alpha_s)))          # u(i,j) - u(i+1,j)
+        b = tf.reduce_mean(tf.pow(tf.square(tf.sub(flowx[:, :, :-1], flowx[:, :, 1:])) + tf.square(tf.constant(epsilon)), tf.constant(alpha_s)))          # u(i,j) - u(i,j+1)
+        c = tf.reduce_mean(tf.pow(tf.square(tf.sub(flowy[:, :-1, :], flowy[:, 1:, :])) + tf.square(tf.constant(epsilon)), tf.constant(alpha_s)))          # v(i,j) - v(i+1,j)
+        d = tf.reduce_mean(tf.pow(tf.square(tf.sub(flowy[:, :, :-1], flowy[:, :, 1:])) + tf.square(tf.constant(epsilon)), tf.constant(alpha_s)))          # v(i,j) - v(i,j+1)
+        loss_smooth = a + b + c + d
+
+        slim.losses.add_loss(Charbonnier)
+        slim.losses.add_loss(loss_smooth)
+
+    # return loss_predict, loss_reconstruct, flow_vis, tf.reshape(preds, [shape[0], shape[1], shape[2], shape[3]])
+    return Charbonnier, loss_smooth, flow_vis, tf.reshape(preds, [shape[0], shape[1], shape[2], shape[3]])
 
 
 

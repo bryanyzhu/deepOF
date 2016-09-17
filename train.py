@@ -6,31 +6,30 @@ import tensorflow.contrib.slim as slim
 import numpy as np
 import logging
 import subprocess
-from PIL import Image
 import cv2
 import math
 import utils as utils
 
 
-tf.app.flags.DEFINE_string('train_log_dir', '/tmp/data_1/',
+tf.app.flags.DEFINE_string('train_log_dir', '/tmp/data_2/',
                     'Directory where to write event logs.')
 
-tf.app.flags.DEFINE_integer('batch_size', 8, 'The number of images in each batch.')
+tf.app.flags.DEFINE_integer('batch_size', 4, 'The number of images in each batch.')
 
 tf.app.flags.DEFINE_integer('overwrite', True, 'Overwrite existing directory.')
 
-tf.app.flags.DEFINE_integer('save_interval_epoch', 10,
+tf.app.flags.DEFINE_integer('save_interval_epoch', 20,
                      'The frequency with which the model is saved, in epoch.')
 
 tf.app.flags.DEFINE_integer('max_number_of_steps', 10000000,
                      'The maximum number of gradient steps.')
 
-tf.app.flags.DEFINE_float('learning_rate', .00001, 'The learning rate')
+tf.app.flags.DEFINE_float('learning_rate', .0001, 'The learning rate')
 
 tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.5,
                    """Learning rate decay factor.""")
 
-tf.app.flags.DEFINE_float('num_epochs_per_decay', 40,
+tf.app.flags.DEFINE_float('num_epochs_per_decay', 100,
                    """Number of epochs after which learning rate decays.""")
 
 tf.app.flags.DEFINE_string('master', 'local',
@@ -47,7 +46,7 @@ class train:
         self.image_size = image_size
         self.sintel = sintelLoader(data_path, image_size, split, passKey)
         self.batch_size = FLAGS.batch_size
-        self.maxEpochs = 1000
+        self.maxEpochs = 2000
         self.maxIterPerEpoch = int(math.floor(len(self.sintel.trainList)/self.batch_size))
 
         self.trainNet(self.batch_size)
@@ -151,10 +150,19 @@ class train:
                 if iteration % display == 0:
                 # if iteration == 1:
                     loss_ps, loss_rs, flow_preds, frame_preds = sess.run([loss_p, loss_r, flow_pred, frame_pred], feed_dict={source_img: source, target_img: target})
-                    flow_error = ((flow_preds - flow) ** 2).mean(axis=None)/self.batch_size
+                    # flow_error = ((flow_preds - flow) ** 2).mean(axis=None)/self.batch_size
+                    # Calculate endpoint error
+                    AEE = 0 
+                    AAE = 0
+                    for sample in xrange(self.batch_size):
+                        f1 = np.expand_dims(cv2.resize(flow_preds[sample,:,:,:], (1024, 436)), 0)
+                        f2 = np.expand_dims(flow[sample,:,:,:], 0)
+                        # print f1.shape, f2.shape
+                        AEE += utils.flow_ee(f1, f2)
+                        AAE += utils.flow_ae(f1, f2)
+                    print("---Train Batch(%d): Epoch %03d Iter %04d: Data Loss %2.4f Smooth Loss %2.4f AEE %4.4f AAE %4.4f \r\n" 
+                        % (self.batch_size, epoch, iteration, loss_ps, loss_rs, AEE/self.batch_size, AAE/self.batch_size))
                     assert not np.isnan(loss_ps) and not np.isnan(loss_rs), 'Model diverged with loss = NaN'
-                    print("---Training: Epoch %03d Iter %04d: Prediction Loss %2.4f Reconstruction Loss %2.4f Flow MSE %4.4f \r\n" 
-                        % (epoch, iteration, loss_ps, loss_rs, flow_error))
                 if iteration == int(math.floor(self.maxIterPerEpoch/2)) or iteration == self.maxIterPerEpoch:
                 # if True:
                     self.evaluateNet(epoch, iteration, sess)
@@ -191,7 +199,12 @@ class train:
             # assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
             totalPLoss += loss_ps
             totalRLoss += loss_rs
-            flow_p.append(flow_preds)
+            for sample in xrange(testBatchSize):
+                flow_preds_up = np.expand_dims(cv2.resize(flow_preds[sample,:,:,:], (1024, 436)), 0)
+                flow_p.append(flow_preds_up)
+                # cv2.Smooth(flow_preds_up, flow_preds_smooth, smoothtype=CV_MEDIAN, param1=5, param2=5)
+                # flow_preds_smooth = np.stack((cv2.medianBlur(flow_preds_up.squeeze()[:,:,0].squeeze(), 5), cv2.medianBlur(flow_preds_up.squeeze()[:,:,1].squeeze(), 5)), axis=2)
+                # flow_p.append(np.expand_dims(flow_preds_smooth, 0))
             flow_gt.append(flow)
 
             # Visualize
@@ -212,11 +225,12 @@ class train:
                 # flowy = (flowy-flowy.min())/(flowy.max()-flowy.min())
                 # flowy = np.uint8(flowy*255.0)
                 # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowy" + ".jpeg", flowy)
-
-                flowColor = utils.flowToColor(flow_preds[0,:,:,:].squeeze())
+                
+                flowColor = utils.flowToColor(flow_p[(iteration-1)*testBatchSize].squeeze())
                 # print flowColor.max(), flowColor.min(), flowColor.mean()
                 cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor" + ".jpeg", flowColor)
 
+        # print np.concatenate(flow_p, axis=0).shape, np.concatenate(flow_gt, axis=0).shape
         # Calculate endpoint error
         AEE = utils.flow_ee(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
         # EE_tot, AEE = utils.flow_ee(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
@@ -225,7 +239,7 @@ class train:
         AAE = utils.flow_ae(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
         # AE_tot, AAE = utils.flow_ae(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
 
-        print("***Test: Epoch %03d Iter %04d: Pred Loss %2.4f Recons Loss %2.4f AEE %4.4f AAE %4.4f \r\n" 
+        print("***Test: Epoch %03d Iter %04d: Data Loss %2.4f Smooth Loss %2.4f AEE %4.4f AAE %4.4f \r\n" 
             % (epoch, trainIter, totalPLoss/maxTestIter, totalRLoss/maxTestIter, AEE, AAE))
 
         

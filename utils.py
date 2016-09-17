@@ -74,7 +74,7 @@ def flow_ae(f1, f2, mask=None):
 	v_GT = f2[:,:,:,1]
 	numerator = 1 + u * u_GT + v * v_GT
 	denominator = np.sqrt(1 + u**2 + v**2) * np.sqrt(1 + u_GT**2 + v_GT**2)
-	ae_tot = np.arccos(numerator / denominator)
+	ae_tot = np.arccos(np.clip(numerator / denominator, -1, 1))
 	aae = np.mean(ae_tot, axis=None) 
 	# return ae_tot, aae
 	return aae
