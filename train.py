@@ -10,14 +10,14 @@ import math
 import utils as utils
 
 
-tf.app.flags.DEFINE_string('train_log_dir', '/tmp/data_3/',
+tf.app.flags.DEFINE_string('train_log_dir', '/tmp/data_2/',
                     'Directory where to write event logs.')
 
 tf.app.flags.DEFINE_integer('batch_size', 4, 'The number of images in each batch.')
 
 tf.app.flags.DEFINE_integer('overwrite', True, 'Overwrite existing directory.')
 
-tf.app.flags.DEFINE_integer('save_interval_epoch', 50,
+tf.app.flags.DEFINE_integer('save_interval_epoch', 150,
                      'The frequency with which the model is saved, in epoch.')
 
 tf.app.flags.DEFINE_integer('max_number_of_steps', 10000000,
@@ -94,7 +94,7 @@ class train:
         # with tf.device('/gpu:1'):
         source_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
         target_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
-        loss, flow_pred = wrapFlow.Model(source_img, target_img)
+        loss, midFlows, flow_pred = wrapFlow.Model(source_img, target_img)
         print('Finished building Network.')
         init = tf.initialize_all_variables()
         total_loss = slim.losses.get_total_loss(add_regularization_losses=False)
@@ -110,7 +110,7 @@ class train:
         self.deconv_bilinearInit_vars = [var for var in model_vars if (var.name).startswith('deconv')]  
 
         VGG16Init = False
-        bilinearInit = False
+        bilinearInit = True
 
         # Use pre-trained VGG16 model to initialize conv filters
         if VGG16Init:
@@ -146,14 +146,14 @@ class train:
                 train_op.run(feed_dict = {source_img: source, target_img: target, learning_rate: lr}, session = sess)
                 if iteration % display == 0:
                 # if iteration == 1:
-                    losses, flow_preds = sess.run([loss, flow_pred], feed_dict={source_img: source, target_img: target})
+                    losses, flows_all, flow_preds = sess.run([loss, midFlows, flow_pred], feed_dict={source_img: source, target_img: target})
                     # flow_error = ((flow_preds - flow) ** 2).mean(axis=None)/self.batch_size
                     # Calculate endpoint error
                     AEE = utils.flow_ee(flow_preds, flow)
                     AAE = utils.flow_ae(flow_preds, flow)
-                    print("---Train Batch(%d): Epoch %03d Iter %04d: Loss %2.4f AEE %4.4f AAE %4.4f \r\n" 
-                        % (self.batch_size, epoch, iteration, losses, AEE, AAE))
-                    assert not np.isnan(losses), 'Model diverged with loss = NaN'
+                    print("---Train Batch(%d): Epoch %03d Iter %04d: d1 %2.4f d2 %2.4f d3 %2.4f d4 %2.4f d5 %2.4f final %2.4f AEE %4.4f AAE %4.4f \r\n" 
+                        % (self.batch_size, epoch, iteration, losses[0], losses[1], losses[2], losses[3], losses[4], losses[5], AEE, AAE))
+                    assert not np.isnan(losses).any(), 'Model diverged with loss = NaN'
                 # if iteration == int(math.floor(self.maxIterPerEpoch/2)) or iteration == self.maxIterPerEpoch:
                 if iteration == self.maxIterPerEpoch:
                     self.evaluateNet(epoch, iteration, sess)
@@ -176,18 +176,28 @@ class train:
         # But because of different batch size, I don't know how to evaluate the model on validation data
         tf.get_variable_scope().reuse_variables()
 
-        loss, flow_pred = wrapFlow.Model(source_img, target_img)
+        loss, midFlows, flow_pred = wrapFlow.Model(source_img, target_img)
         maxTestIter = int(math.floor(len(self.sintel.valList)/testBatchSize))
-        totalLoss = 0
+        d1 = 0
+        d2 = 0
+        d3 = 0
+        d4 = 0
+        d5 = 0
+        final = 0
         flow_p = []
         flow_gt = []
         for iteration in xrange(1, maxTestIter+1):
             testBatch = self.sintel.sampleVal(testBatchSize, iteration)
             source, target, flow = testBatch[0]
             imgPath = testBatch[1][0]
-            losses, flow_preds = sess.run([loss, flow_pred], feed_dict={source_img: source, target_img: target})
+            losses, flows_all, flow_preds = sess.run([loss, midFlows, flow_pred], feed_dict={source_img: source, target_img: target})
             # assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
-            totalLoss += losses
+            d1 += losses[0]
+            d2 += losses[1]
+            d3 += losses[2]
+            d4 += losses[3]
+            d5 += losses[4]
+            final += losses[5]
             flow_p.append(flow_preds)
             flow_gt.append(flow)
 
@@ -215,11 +225,14 @@ class train:
         # AE_tot, AAE = utils.flow_ae(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
 
         # calculate statistics
-        print("***Test: flow_max (flow_gt) %2.4f (%2.4f)  flow_mean (flow_gt) %2.4f (%2.4f) \r\n" 
-            % (f1.max(), f2.max(), f1.mean(), f2.mean()))
+        if epoch == 1:
+            print("***Test: max (flow_gt) %2.4f    abs_mean (flow_gt) %2.4f \r\n"
+                % (np.amax(f2, axis=None), np.mean(np.absolute(f2), axis=None)))
+        print("***Test flow abs_mean: d1 %2.4f d2 %2.4f d3 %2.4f d4 %2.4f d5 %2.4f final %2.4f \r\n" 
+            % (np.mean(np.absolute(flows_all[0]), axis=None), np.mean(np.absolute(flows_all[1]), axis=None), np.mean(np.absolute(flows_all[2]), axis=None), np.mean(np.absolute(flows_all[3]), axis=None), np.mean(np.absolute(flows_all[4]), axis=None), np.mean(np.absolute(f1), axis=None)))
 
-        print("***Test: Epoch %03d Iter %04d: Loss %2.4f AEE %4.4f AAE %4.4f \r\n" 
-            % (epoch, trainIter, totalLoss/maxTestIter, AEE, AAE))
+        print("***Test: Epoch %03d Iter %04d: d1 %2.4f d2 %2.4f d3 %2.4f d4 %2.4f d5 %2.4f final %2.4f AEE %4.4f AAE %4.4f \r\n" 
+            % (epoch, trainIter, d1/maxTestIter, d2/maxTestIter, d3/maxTestIter, d4/maxTestIter, d5/maxTestIter, final/maxTestIter, AEE, AAE))
 
         
 

@@ -2,8 +2,6 @@
 """
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
-import numpy as np
-import logging
 
 def Model(inputs, outputs):
     """Creates the warp flow model.
@@ -19,70 +17,72 @@ def Model(inputs, outputs):
                         activation_fn=tf.nn.relu,
                         weights_initializer=tf.truncated_normal_initializer(0.0, 0.01),
                         weights_regularizer=slim.l2_regularizer(0.0005)):
-        with tf.device('/gpu:0'):
-            # conv1_1 = slim.conv2d(inputs, 64, [3, 3], scope='conv1_1')
-            conv1_1 = slim.conv2d(tf.concat(3, [inputs, outputs]), 64, [3, 3], scope='conv1_1')
-            pool1 = slim.max_pool2d(conv1_1, [2, 2], scope='pool1')
-            conv2_1 = slim.conv2d(pool1, 128, [3, 3], scope='conv2_1')
-            pool2 = slim.max_pool2d(conv2_1, [2, 2], scope='pool2')
-            conv3_1 = slim.conv2d(pool2, 256, [3, 3], scope='conv3_1')
-            conv3_2 = slim.conv2d(conv3_1, 256, [3, 3], scope='conv3_2')
-            pool3 = slim.max_pool2d(conv3_2, [2, 2], scope='pool3')
-            conv4_1 = slim.conv2d(pool3, 512, [3, 3], scope='conv4_1')
-            conv4_2 = slim.conv2d(conv4_1, 512, [3, 3], scope='conv4_2')
-            pool4 = slim.max_pool2d(conv4_2, [2, 2], scope='pool4')
-            conv5_1 = slim.conv2d(pool4, 512, [3, 3], scope='conv5_1')
-            conv5_2 = slim.conv2d(conv5_1, 512, [3, 3], scope='conv5_2')
-            pool5 = slim.max_pool2d(conv5_2, [2, 2], scope='pool5')
-            flatten5 = slim.flatten(pool5, scope='flatten5')
-            fc6 = slim.fully_connected(flatten5, 4096, scope='fc6')
-            dropout6 = slim.dropout(fc6, 0.5, scope='dropout6')
-            fc7 = slim.fully_connected(dropout6, 4096, scope='fc7')
-            dropout7 = slim.dropout(fc7, 0.5, scope='dropout7')
-            
-            channels = 40
-            reshape_h = pool4.get_shape()[1].value/2
-            reshape_w = pool4.get_shape()[2].value/2
-         
-            fc8 = slim.fully_connected(dropout7, channels*reshape_h*reshape_w, scope='d5')
-            bn_pool1 = slim.batch_norm(pool1, scope='bn_pool1')
-            bn_pool2 = slim.batch_norm(pool2, scope='bn_pool2')
-            bn_pool3 = slim.batch_norm(pool3, scope='bn_pool3')
-            bn_pool4 = slim.batch_norm(pool4, scope='bn_pool4')
+        # with tf.device('/gpu:0'):
+        # conv1_1 = slim.conv2d(inputs, 64, [3, 3], scope='conv1_1')
+        conv1_1 = slim.conv2d(tf.concat(3, [inputs, outputs]), 64, [3, 3], scope='conv1_1')
+        pool1 = slim.max_pool2d(conv1_1, [2, 2], scope='pool1')
+        conv2_1 = slim.conv2d(pool1, 128, [3, 3], scope='conv2_1')
+        pool2 = slim.max_pool2d(conv2_1, [2, 2], scope='pool2')
+        conv3_1 = slim.conv2d(pool2, 256, [3, 3], scope='conv3_1')
+        conv3_2 = slim.conv2d(conv3_1, 256, [3, 3], scope='conv3_2')
+        pool3 = slim.max_pool2d(conv3_2, [2, 2], scope='pool3')
+        conv4_1 = slim.conv2d(pool3, 512, [3, 3], scope='conv4_1')
+        conv4_2 = slim.conv2d(conv4_1, 512, [3, 3], scope='conv4_2')
+        pool4 = slim.max_pool2d(conv4_2, [2, 2], scope='pool4')
+        conv5_1 = slim.conv2d(pool4, 512, [3, 3], scope='conv5_1')
+        conv5_2 = slim.conv2d(conv5_1, 512, [3, 3], scope='conv5_2')
+        pool5 = slim.max_pool2d(conv5_2, [2, 2], scope='pool5')
+        flatten5 = slim.flatten(pool5, scope='flatten5')
+        fc6 = slim.fully_connected(flatten5, 4096, scope='fc6')
+        dropout6 = slim.dropout(fc6, 0.5, scope='dropout6')
+        # Maybe remove one fc layer
+        fc7 = slim.fully_connected(dropout6, 4096, scope='fc7')
+        dropout7 = slim.dropout(fc7, 0.5, scope='dropout7')
+        
+        channels = 40       # Maybe 60 later
+        reshape_h = pool4.get_shape()[1].value/2
+        reshape_w = pool4.get_shape()[2].value/2
+     
+        fc8 = slim.fully_connected(dropout7, channels*reshape_h*reshape_w, scope='d5')
+        bn_pool1 = slim.batch_norm(pool1, scope='bn_pool1')
+        bn_pool2 = slim.batch_norm(pool2, scope='bn_pool2')
+        bn_pool3 = slim.batch_norm(pool3, scope='bn_pool3')
+        bn_pool4 = slim.batch_norm(pool4, scope='bn_pool4')
 
-            d1 = slim.conv2d(bn_pool1, channels, [3, 3], scope='d1')
-            d2 = slim.conv2d(bn_pool2, channels, [3, 3], scope='d2')
-            d3 = slim.conv2d(bn_pool3, channels, [3, 3], scope='d3')
-            d4 = slim.conv2d(bn_pool4, channels, [3, 3], scope='d4')
-            d5 = tf.reshape(fc8, [-1, reshape_h, reshape_w, channels])
+        # Maybe try no batch norm
+        d1 = slim.conv2d(bn_pool1, channels, [3, 3], scope='d1')
+        d2 = slim.conv2d(bn_pool2, channels, [3, 3], scope='d2')
+        d3 = slim.conv2d(bn_pool3, channels, [3, 3], scope='d3')
+        d4 = slim.conv2d(bn_pool4, channels, [3, 3], scope='d4')
+        d5 = tf.reshape(fc8, [-1, reshape_h, reshape_w, channels])
 
-            scale = 1
-            deconv_1 = slim.conv2d_transpose(d1, channels, [2*scale, 2*scale], stride=scale, scope='deconv_1')
-            scale *= 2
-            deconv_2 = slim.conv2d_transpose(d2, channels, [2*scale, 2*scale], stride=scale, scope='deconv_2')
-            scale *= 2
-            deconv_3 = slim.conv2d_transpose(d3, channels, [2*scale, 2*scale], stride=scale, scope='deconv_3')
-            scale *= 2
-            deconv_4 = slim.conv2d_transpose(d4, channels, [2*scale, 2*scale], stride=scale, scope='deconv_4')
-            scale *= 2
-            deconv_5 = slim.conv2d_transpose(d5, channels, [2*scale, 2*scale], stride=scale, scope='deconv_5')
-            flows = tf.add_n([deconv_1, deconv_2, deconv_3, deconv_4, deconv_5])
+        scale = 1
+        deconv_1 = slim.conv2d_transpose(d1, channels, [2*scale, 2*scale], stride=scale, scope='deconv_1')
+        scale *= 2
+        deconv_2 = slim.conv2d_transpose(d2, channels, [2*scale, 2*scale], stride=scale, scope='deconv_2')
+        scale *= 2
+        deconv_3 = slim.conv2d_transpose(d3, channels, [2*scale, 2*scale], stride=scale, scope='deconv_3')
+        scale *= 2
+        deconv_4 = slim.conv2d_transpose(d4, channels, [2*scale, 2*scale], stride=scale, scope='deconv_4')
+        scale *= 2
+        deconv_5 = slim.conv2d_transpose(d5, channels, [2*scale, 2*scale], stride=scale, scope='deconv_5')
+        flows = tf.add_n([deconv_1, deconv_2, deconv_3, deconv_4, deconv_5])
 
-            scale = 2
-            # Add multiple intermediate loss
-            # d1_up = slim.conv2d_transpose(d1, channels, [2*scale, 2*scale], stride=scale, scope='d1_up')
-            d1_flows = slim.conv2d(d1, 2, [3, 3], activation_fn=None, scope='d1_flows')
-            # d2_up = slim.conv2d_transpose(d2, channels, [2*scale, 2*scale], stride=scale, scope='d2_up')
-            d2_flows = slim.conv2d(d2, 2, [3, 3], activation_fn=None, scope='d2_flows')
-            # d3_up = slim.conv2d_transpose(d3, channels, [2*scale, 2*scale], stride=scale, scope='d3_up')
-            d3_flows = slim.conv2d(d3, 2, [3, 3], activation_fn=None, scope='d3_flows')
-            # d4_up = slim.conv2d_transpose(d4, channels, [2*scale, 2*scale], stride=scale, scope='d4_up')
-            d4_flows = slim.conv2d(d4, 2, [3, 3], activation_fn=None, scope='d4_flows')
-            # d5_up = slim.conv2d_transpose(d5, channels, [2*scale, 2*scale], stride=scale, scope='d5_up')
-            d5_flows = slim.conv2d(d5, 2, [3, 3], activation_fn=None, scope='d5_flows')
+        scale = 2
+        # Add multiple intermediate loss
+        # d1_up = slim.conv2d_transpose(d1, channels, [2*scale, 2*scale], stride=scale, scope='d1_up')
+        d1_flows = slim.conv2d(d1, 2, [3, 3], activation_fn=None, scope='d1_flows')
+        # d2_up = slim.conv2d_transpose(d2, channels, [2*scale, 2*scale], stride=scale, scope='d2_up')
+        d2_flows = slim.conv2d(d2, 2, [3, 3], activation_fn=None, scope='d2_flows')
+        # d3_up = slim.conv2d_transpose(d3, channels, [2*scale, 2*scale], stride=scale, scope='d3_up')
+        d3_flows = slim.conv2d(d3, 2, [3, 3], activation_fn=None, scope='d3_flows')
+        # d4_up = slim.conv2d_transpose(d4, channels, [2*scale, 2*scale], stride=scale, scope='d4_up')
+        d4_flows = slim.conv2d(d4, 2, [3, 3], activation_fn=None, scope='d4_flows')
+        # d5_up = slim.conv2d_transpose(d5, channels, [2*scale, 2*scale], stride=scale, scope='d5_up')
+        d5_flows = slim.conv2d(d5, 2, [3, 3], activation_fn=None, scope='d5_flows')
 
-            flows = slim.conv2d_transpose(flows, channels, [2*scale, 2*scale], stride=scale, scope='deconv_final')
-            flows = slim.conv2d(flows, 2, [3, 3], activation_fn=None, scope='final_conv')
+        flows = slim.conv2d_transpose(flows, channels, [2*scale, 2*scale], stride=scale, scope='deconv_final')
+        flows = slim.conv2d(flows, 2, [3, 3], activation_fn=None, scope='final_conv')
             
         epsilon = tf.constant(0.001, name='epsilon')
         alpha_c = tf.constant(0.4, name='alpha_c')
@@ -111,11 +111,14 @@ def Model(inputs, outputs):
 
         final_loss = loss_interp(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth)
 
-        loss_weight = [6,5,4,3,1,6]
+        loss_weight = [12,4,3,2,1,16]
         all_loss = loss_weight[0]*d1_loss + loss_weight[1]*d2_loss + loss_weight[2]*d3_loss + loss_weight[3]*d4_loss + loss_weight[4]*d5_loss + loss_weight[5]*final_loss
         slim.losses.add_loss(all_loss)
+        losses = [d1_loss, d2_loss, d3_loss, d4_loss, d5_loss, final_loss]
+        flows_all = [d1_flows, d2_flows, d3_flows, d4_flows, d5_flows]
 
-        return all_loss, tf.image.resize_bicubic(flows, [436, 1024])
+        return losses, flows_all, tf.image.resize_bicubic(flows, [436, 1024])
+        # return losses, flows
 
 def loss_interp(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth):
 
