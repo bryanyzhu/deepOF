@@ -4,32 +4,31 @@ import wrapFlow
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 import numpy as np
-import logging
 import subprocess
 import cv2
 import math
 import utils as utils
 
 
-tf.app.flags.DEFINE_string('train_log_dir', '/tmp/data_2/',
+tf.app.flags.DEFINE_string('train_log_dir', '/tmp/data_3/',
                     'Directory where to write event logs.')
 
 tf.app.flags.DEFINE_integer('batch_size', 4, 'The number of images in each batch.')
 
 tf.app.flags.DEFINE_integer('overwrite', True, 'Overwrite existing directory.')
 
-tf.app.flags.DEFINE_integer('save_interval_epoch', 20,
+tf.app.flags.DEFINE_integer('save_interval_epoch', 50,
                      'The frequency with which the model is saved, in epoch.')
 
 tf.app.flags.DEFINE_integer('max_number_of_steps', 10000000,
                      'The maximum number of gradient steps.')
 
-tf.app.flags.DEFINE_float('learning_rate', .0001, 'The learning rate')
+tf.app.flags.DEFINE_float('learning_rate', 0.000016, 'The learning rate')
 
 tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.5,
                    """Learning rate decay factor.""")
 
-tf.app.flags.DEFINE_float('num_epochs_per_decay', 100,
+tf.app.flags.DEFINE_float('num_epochs_per_decay', 450,
                    """Number of epochs after which learning rate decays.""")
 
 tf.app.flags.DEFINE_string('master', 'local',
@@ -46,7 +45,7 @@ class train:
         self.image_size = image_size
         self.sintel = sintelLoader(data_path, image_size, split, passKey)
         self.batch_size = FLAGS.batch_size
-        self.maxEpochs = 2000
+        self.maxEpochs = 2500
         self.maxIterPerEpoch = int(math.floor(len(self.sintel.trainList)/self.batch_size))
 
         self.trainNet(self.batch_size)
@@ -92,20 +91,18 @@ class train:
         if not os.path.isdir(FLAGS.train_log_dir):
             os.makedirs(FLAGS.train_log_dir, mode=0777)
 
-        sess = tf.Session()
+        # with tf.device('/gpu:1'):
         source_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
         target_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
-        loss_p,  loss_r, flow_pred, frame_pred  = wrapFlow.Model(source_img, target_img)
+        loss, flow_pred = wrapFlow.Model(source_img, target_img)
         print('Finished building Network.')
-
-        logging.info("Start Initializing Variabels.")
         init = tf.initialize_all_variables()
         total_loss = slim.losses.get_total_loss(add_regularization_losses=False)
-    
         lr = FLAGS.learning_rate
         learning_rate = tf.placeholder(tf.float32, shape=[])
         train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(total_loss)
 
+        sess = tf.Session()
         sess.run(tf.initialize_all_variables())
         # What about pre-traind initialized model params and deconv parms? 
         model_vars = tf.trainable_variables()
@@ -138,7 +135,7 @@ class train:
             print("Restore from " +  ckpt.model_checkpoint_path)
             saver.restore(sess, ckpt.model_checkpoint_path)
         
-        display = 20        # number of iterations to display training log
+        display = 50        # number of iterations to display training log
         for epoch in xrange(1, self.maxEpochs+1):
             print("Epoch %d: \r\n" % epoch)
             print("Learning Rate %f: \r\n" % lr)
@@ -149,22 +146,16 @@ class train:
                 train_op.run(feed_dict = {source_img: source, target_img: target, learning_rate: lr}, session = sess)
                 if iteration % display == 0:
                 # if iteration == 1:
-                    loss_ps, loss_rs, flow_preds, frame_preds = sess.run([loss_p, loss_r, flow_pred, frame_pred], feed_dict={source_img: source, target_img: target})
+                    losses, flow_preds = sess.run([loss, flow_pred], feed_dict={source_img: source, target_img: target})
                     # flow_error = ((flow_preds - flow) ** 2).mean(axis=None)/self.batch_size
                     # Calculate endpoint error
-                    AEE = 0 
-                    AAE = 0
-                    for sample in xrange(self.batch_size):
-                        f1 = np.expand_dims(cv2.resize(flow_preds[sample,:,:,:], (1024, 436)), 0)
-                        f2 = np.expand_dims(flow[sample,:,:,:], 0)
-                        # print f1.shape, f2.shape
-                        AEE += utils.flow_ee(f1, f2)
-                        AAE += utils.flow_ae(f1, f2)
-                    print("---Train Batch(%d): Epoch %03d Iter %04d: Data Loss %2.4f Smooth Loss %2.4f AEE %4.4f AAE %4.4f \r\n" 
-                        % (self.batch_size, epoch, iteration, loss_ps, loss_rs, AEE/self.batch_size, AAE/self.batch_size))
-                    assert not np.isnan(loss_ps) and not np.isnan(loss_rs), 'Model diverged with loss = NaN'
-                if iteration == int(math.floor(self.maxIterPerEpoch/2)) or iteration == self.maxIterPerEpoch:
-                # if True:
+                    AEE = utils.flow_ee(flow_preds, flow)
+                    AAE = utils.flow_ae(flow_preds, flow)
+                    print("---Train Batch(%d): Epoch %03d Iter %04d: Loss %2.4f AEE %4.4f AAE %4.4f \r\n" 
+                        % (self.batch_size, epoch, iteration, losses, AEE, AAE))
+                    assert not np.isnan(losses), 'Model diverged with loss = NaN'
+                # if iteration == int(math.floor(self.maxIterPerEpoch/2)) or iteration == self.maxIterPerEpoch:
+                if iteration == self.maxIterPerEpoch:
                     self.evaluateNet(epoch, iteration, sess)
 
             if epoch % FLAGS.num_epochs_per_decay == 0:
@@ -185,30 +176,23 @@ class train:
         # But because of different batch size, I don't know how to evaluate the model on validation data
         tf.get_variable_scope().reuse_variables()
 
-        loss_p, loss_r, flow_pred, frame_pred  = wrapFlow.Model(source_img, target_img)
+        loss, flow_pred = wrapFlow.Model(source_img, target_img)
         maxTestIter = int(math.floor(len(self.sintel.valList)/testBatchSize))
-        totalPLoss = 0
-        totalRLoss = 0
+        totalLoss = 0
         flow_p = []
         flow_gt = []
         for iteration in xrange(1, maxTestIter+1):
             testBatch = self.sintel.sampleVal(testBatchSize, iteration)
             source, target, flow = testBatch[0]
             imgPath = testBatch[1][0]
-            loss_ps, loss_rs, flow_preds, frame_preds = sess.run([loss_p, loss_r, flow_pred, frame_pred], feed_dict={source_img: source, target_img: target})
+            losses, flow_preds = sess.run([loss, flow_pred], feed_dict={source_img: source, target_img: target})
             # assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
-            totalPLoss += loss_ps
-            totalRLoss += loss_rs
-            for sample in xrange(testBatchSize):
-                flow_preds_up = np.expand_dims(cv2.resize(flow_preds[sample,:,:,:], (1024, 436)), 0)
-                flow_p.append(flow_preds_up)
-                # cv2.Smooth(flow_preds_up, flow_preds_smooth, smoothtype=CV_MEDIAN, param1=5, param2=5)
-                # flow_preds_smooth = np.stack((cv2.medianBlur(flow_preds_up.squeeze()[:,:,0].squeeze(), 5), cv2.medianBlur(flow_preds_up.squeeze()[:,:,1].squeeze(), 5)), axis=2)
-                # flow_p.append(np.expand_dims(flow_preds_smooth, 0))
+            totalLoss += losses
+            flow_p.append(flow_preds)
             flow_gt.append(flow)
 
             # Visualize
-            if iteration % 4 == 0:
+            if iteration % 2 == 0:
                 if epoch == 1:
                     gt_1 = source[0, :, :, :].squeeze()
                     cv2.imwrite(FLAGS.train_log_dir + self.sintel.valList[imgPath][0].replace("/", "-")[:-4] + ".jpeg", gt_1)
@@ -217,33 +201,27 @@ class train:
                     GTflowColor = utils.flowToColor(flow[0,:,:,:].squeeze())
                     cv2.imwrite(FLAGS.train_log_dir + self.sintel.valList[imgPath][0].replace("/", "-")[:-4] + "_gt_flow.jpeg", GTflowColor)
 
-                # flowx = np.squeeze(flow_preds[0, :, :, 0])
-                # flowx = (flowx-flowx.min())/(flowx.max()-flowx.min())
-                # flowx = np.uint8(flowx*255.0)
-                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowx" + ".jpeg", flowx)
-                # flowy = np.squeeze(flow_preds[0, :, :, 1])
-                # flowy = (flowy-flowy.min())/(flowy.max()-flowy.min())
-                # flowy = np.uint8(flowy*255.0)
-                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowy" + ".jpeg", flowy)
-                
-                flowColor = utils.flowToColor(flow_p[(iteration-1)*testBatchSize].squeeze())
+                flowColor = utils.flowToColor(flow_p[iteration-1][0,:,:,:].squeeze())
                 # print flowColor.max(), flowColor.min(), flowColor.mean()
                 cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor" + ".jpeg", flowColor)
 
         # print np.concatenate(flow_p, axis=0).shape, np.concatenate(flow_gt, axis=0).shape
         # Calculate endpoint error
-        AEE = utils.flow_ee(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
-        # EE_tot, AEE = utils.flow_ee(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
-
+        f1 = np.concatenate(flow_p, axis=0)
+        f2 = np.concatenate(flow_gt, axis=0)
+        AEE = utils.flow_ee(f1, f2)
         # Calculate anguar error, maybe not necessary
-        AAE = utils.flow_ae(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
+        AAE = utils.flow_ae(f1, f2)
         # AE_tot, AAE = utils.flow_ae(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
 
-        print("***Test: Epoch %03d Iter %04d: Data Loss %2.4f Smooth Loss %2.4f AEE %4.4f AAE %4.4f \r\n" 
-            % (epoch, trainIter, totalPLoss/maxTestIter, totalRLoss/maxTestIter, AEE, AAE))
+        # calculate statistics
+        print("***Test: flow_max (flow_gt) %2.4f (%2.4f)  flow_mean (flow_gt) %2.4f (%2.4f) \r\n" 
+            % (f1.max(), f2.max(), f1.mean(), f2.mean()))
+
+        print("***Test: Epoch %03d Iter %04d: Loss %2.4f AEE %4.4f AAE %4.4f \r\n" 
+            % (epoch, trainIter, totalLoss/maxTestIter, AEE, AAE))
 
         
-
 
 
             # flowx = np.squeeze(flow_preds[0, :, :, 0])

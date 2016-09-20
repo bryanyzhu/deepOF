@@ -120,7 +120,7 @@ def flowToColor(flow):
 	#         maxrad = maxFlow;
 	#     end;       
 	# end;
-	eps = 0.0000001
+	eps = 2.22e-16
 	u = u / (maxrad + eps)
 	v = v / (maxrad + eps)
 
