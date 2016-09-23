@@ -1,7 +1,7 @@
 import os, sys
 import argparse
+# from ucf101train import train
 from train import train
-# from ucf101Loader import ucf101Loader
 
 def deepOF(data_path):
 	MPISintel = True
@@ -14,11 +14,8 @@ def deepOF(data_path):
 		passKey = 'final'		# clean or final
 		train(data_path, image_size, split, passKey)
 	elif UCF101:
-		image_size = [240, 320]
-		dl = ucf101Loader(data_path, image_size)
-		a, b, c = dl.sampleTrain(4)
-
-
+		image_size = [256, 320]
+		train(data_path, image_size)
 
 def main():
 	# Example usage: python deepOF.py ~/Documents/MPI-Sintel/

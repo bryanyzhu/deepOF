@@ -1,6 +1,6 @@
-import os,sys
-from sintelLoader import sintelLoader
-import wrapFlow
+import os, sys
+from ucf101Loader import ucf101Loader
+import ucf101wrapFlow
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 import numpy as np
@@ -10,25 +10,25 @@ import math
 import utils as utils
 
 
-tf.app.flags.DEFINE_string('train_log_dir', '/tmp/data_5/',
+tf.app.flags.DEFINE_string('train_log_dir', '/tmp/ucf101_1/',
                     'Directory where to write event logs.')
 
 tf.app.flags.DEFINE_integer('batch_size', 4, 'The number of images in each batch.')
 
 tf.app.flags.DEFINE_integer('overwrite', True, 'Overwrite existing directory.')
 
-tf.app.flags.DEFINE_integer('save_interval_epoch', 300,
+tf.app.flags.DEFINE_integer('save_interval_epoch', 1,
                      'The frequency with which the model is saved, in epoch.')
 
 tf.app.flags.DEFINE_integer('max_number_of_steps', 10000000,
                      'The maximum number of gradient steps.')
 
-tf.app.flags.DEFINE_float('learning_rate', 0.000016, 'The learning rate')
+tf.app.flags.DEFINE_float('learning_rate', 0.00016, 'The learning rate')
 
 tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.5,
                    """Learning rate decay factor.""")
 
-tf.app.flags.DEFINE_float('num_epochs_per_decay', 50,
+tf.app.flags.DEFINE_float('num_epochs_per_decay', 2,
                    """Number of epochs after which learning rate decays.""")
 
 tf.app.flags.DEFINE_string('master', 'local',
@@ -41,13 +41,22 @@ class train:
     '''Pipeline for training
     '''
 
-    def __init__(self, data_path, image_size, split, passKey):
+    def __init__(self, data_path, image_size):
         self.image_size = image_size
-        self.sintel = sintelLoader(data_path, image_size, split, passKey)
+        self.ucf101 = ucf101Loader(data_path, image_size)
         self.batch_size = FLAGS.batch_size
-        self.maxEpochs = 250
-        self.maxIterPerEpoch = int(math.floor(len(self.sintel.trainList)/self.batch_size))
+        self.maxEpochs = 1000
+        # Read in standard split information
+        trainSplit = os.path.join(data_path, "ucfTrainTestlist", "trainlist01.txt")
+        testSplit = os.path.join(data_path, "ucfTrainTestlist", "testlist01.txt")
+        f_train = open(trainSplit, "r")
+        NumTrainClips = len(f_train.readlines())
+        f_test = open(testSplit, "r")
+        NumTestClips = len(f_test.readlines())
 
+        self.maxIterPerEpoch = int(math.floor(NumTrainClips / self.batch_size))
+        print("Max iterations per epoch is %d. " % self.maxIterPerEpoch)
+        
         self.trainNet(self.batch_size)
 
     def downloadModel(self, modelUrl):
@@ -94,9 +103,11 @@ class train:
         # with tf.device('/gpu:1'):
         source_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
         target_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
+        labels = tf.placeholder(tf.int32, [self.batch_size])
         loss_weight = tf.placeholder(tf.float32, [6])
-        loss, midFlows, flow_pred = wrapFlow.flowNet(source_img, target_img, loss_weight)
+        loss, midFlows, flow_pred = ucf101wrapFlow.flowNet(source_img, target_img, loss_weight, labels)
         print('Finished building Network.')
+
         init = tf.initialize_all_variables()
         total_loss = slim.losses.get_total_loss(add_regularization_losses=False)
         lr = FLAGS.learning_rate
@@ -109,18 +120,6 @@ class train:
         model_vars = tf.trainable_variables()
         self.VGG_init_vars = [var for var in model_vars if (var.name).startswith('conv')]
         self.deconv_bilinearInit_vars = [var for var in model_vars if (var.name).startswith('up_')]  
-
-        total_parameters = 0
-        for varCount in model_vars:
-            # shape is an array of tf.Dimension
-            shape = varCount.get_shape()
-            # print(shape)
-            # print(len(shape))
-            variable_parametes = 1
-            for dim in shape:
-                variable_parametes *= dim.value
-            total_parameters += variable_parametes
-        print("FlowNet has %d number of parameters. " % total_parameters)
 
         VGG16Init = False
         bilinearInit = True
@@ -170,20 +169,19 @@ class train:
 
             for iteration in xrange(1, self.maxIterPerEpoch+1):
                 # source, target = self.sintel.sampleTrain(self.batch_size, iteration)      # last several images will be missing
-                source, target, flow = self.sintel.sampleTrain(self.batch_size)
-                train_op.run(feed_dict = {source_img: source, target_img: target, loss_weight: weight_L, learning_rate: lr}, session = sess)
+                source, target, actionClass = self.ucf101.sampleTrain(self.batch_size)
+                train_op.run(feed_dict = {source_img: source, target_img: target, loss_weight: weight_L, labels: actionClass, learning_rate: lr}, session = sess)
+                
                 if iteration % display == 0:
                 # if iteration == 1:
-                    losses, flows_all, flow_preds = sess.run([loss, midFlows, flow_pred], feed_dict={source_img: source, target_img: target, loss_weight: weight_L})
-                    # flow_error = ((flow_preds - flow) ** 2).mean(axis=None)/self.batch_size
-                    # Calculate endpoint error
-                    AEE = utils.flow_ee(flow_preds, flow)
-                    AAE = utils.flow_ae(flow_preds, flow)
-                    print("---Train Batch(%d): Epoch %03d Iter %04d: Loss1 %2.4f Loss2 %2.4f Loss3 %2.4f Loss4 %2.4f Loss5 %2.4f Loss6 %2.4f AEE %4.4f AAE %4.4f \r\n" 
-                        % (self.batch_size, epoch, iteration, losses[0], losses[1], losses[2], losses[3], losses[4], losses[5], AEE, AAE))
+                    losses, flows_all, action_preds, loss_all = sess.run([loss, midFlows, flow_pred, total_loss], feed_dict={source_img: source, target_img: target, loss_weight: weight_L, labels: actionClass})
+                    accuracy = sum(np.equal(np.argmax(action_preds, 1), actionClass)) / float(self.batch_size)
+                    print("---Train Batch(%d): Epoch %03d Iter %04d: Loss1 %2.4f Loss2 %2.4f Loss3 %2.4f Loss4 %2.4f Loss5 %2.4f Loss6 %2.4f Loss7 %2.4f Action %4.4f \r\n" 
+                        % (self.batch_size, epoch, iteration, losses[0], losses[1], losses[2], losses[3], losses[4], losses[5], losses[6], accuracy))
                     assert not np.isnan(losses).any(), 'Model diverged with loss = NaN'
                 # if iteration == int(math.floor(self.maxIterPerEpoch/2)) or iteration == self.maxIterPerEpoch:
                 if iteration == self.maxIterPerEpoch:
+                # if True:
                     print("Start evaluating......")
                     self.evaluateNet(epoch, iteration, weight_L, sess)
 
@@ -197,30 +195,32 @@ class train:
 
     def evaluateNet(self, epoch, trainIter, weight_L, sess):
         # For Sintel, the batch size should be 7, so that all validation images are covered.
-        testBatchSize = 7
+        testBatchSize = 5
         source_img = tf.placeholder(tf.float32, [testBatchSize, self.image_size[0], self.image_size[1], 3])
         target_img = tf.placeholder(tf.float32, [testBatchSize, self.image_size[0], self.image_size[1], 3])
+        labels = tf.placeholder(tf.int32, [testBatchSize])
         loss_weight = tf.placeholder(tf.float32, [6])
         # Don't know if this is safe to set all variables reuse=True
         # But because of different batch size, I don't know how to evaluate the model on validation data
         tf.get_variable_scope().reuse_variables()
 
-        loss, midFlows, flow_pred = wrapFlow.flowNet(source_img, target_img, loss_weight)
-        maxTestIter = int(math.floor(len(self.sintel.valList)/testBatchSize))
+        loss, midFlows, predictions = ucf101wrapFlow.flowNet(source_img, target_img, loss_weight, labels)
+        # maxTestIter = int(math.floor(len(self.sintel.valList)/testBatchSize))
+        maxTestIter = 101
         Loss1 = 0
         Loss2 = 0
         Loss3 = 0
         Loss4 = 0
         Loss5 = 0
         Loss6 = 0
+        Loss7 = 0
         flow_p = []
-        flow_gt = []
+        label_pred = []
+        label_gt = []
         print weight_L
-        for iteration in xrange(1, maxTestIter+1):
-            testBatch = self.sintel.sampleVal(testBatchSize, iteration)
-            source, target, flow = testBatch[0]
-            imgPath = testBatch[1][0]
-            losses, flows_all, flow_preds = sess.run([loss, midFlows, flow_pred], feed_dict={source_img: source, target_img: target, loss_weight: weight_L})
+        for iteration in xrange(maxTestIter):
+            source, target, actionClass = self.ucf101.sampleVal(testBatchSize, iteration)
+            losses, flows_all, action_preds = sess.run([loss, midFlows, predictions], feed_dict={source_img: source, target_img: target, loss_weight: weight_L, labels: actionClass})
             # assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
             Loss1 += losses[0]
             Loss2 += losses[1]
@@ -228,45 +228,20 @@ class train:
             Loss4 += losses[3]
             Loss5 += losses[4]
             Loss6 += losses[5]
-            flow_p.append(flow_preds)
-            flow_gt.append(flow)
+            Loss7 += losses[6]
+            label_pred.extend(np.argmax(action_preds, 1))
+            label_gt.extend(actionClass)
+            flow_p.append(flows_all[0])
 
             # Visualize
             if iteration % 1 == 0:
-                if epoch == 1:
-                    gt_1 = source[0, :, :, :].squeeze()
-                    cv2.imwrite(FLAGS.train_log_dir + self.sintel.valList[imgPath][0].replace("/", "-")[:-4] + ".jpeg", gt_1)
-                    gt_2 = target[0, :, :, :].squeeze()
-                    cv2.imwrite(FLAGS.train_log_dir + self.sintel.valList[imgPath][1].replace("/", "-")[:-4] + ".jpeg", gt_2)
-                    GTflowColor = utils.flowToColor(flow[0,:,:,:].squeeze())
-                    cv2.imwrite(FLAGS.train_log_dir + self.sintel.valList[imgPath][0].replace("/", "-")[:-4] + "_gt_flow.jpeg", GTflowColor)
-
                 flowColor = utils.flowToColor(flow_p[iteration-1][0,:,:,:].squeeze())
                 # print flowColor.max(), flowColor.min(), flowColor.mean()
                 cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor" + ".jpeg", flowColor)
             # print("Iteration %d/%d is Done" % (iteration, maxTestIter))
-
-        # print np.concatenate(flow_p, axis=0).shape, np.concatenate(flow_gt, axis=0).shape
-        # Calculate endpoint error
-        f1 = np.concatenate(flow_p, axis=0)
-        f2 = np.concatenate(flow_gt, axis=0)
-        AEE = utils.flow_ee(f1, f2)
-        # Calculate anguar error, maybe not necessary
-        AAE = utils.flow_ae(f1, f2)
-        # print AEE, AAE
-        # AE_tot, AAE = utils.flow_ae(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
-
-        # calculate statistics
-        if epoch == 1:
-            print("***Test: max (flow_gt) %2.4f    abs_mean (flow_gt) %2.4f \r\n"
-                % (np.amax(f2, axis=None), np.mean(np.absolute(f2), axis=None)))
-        print("***Test flow abs_mean: pr1 %2.4f pr2 %2.4f pr3 %2.4f pr4 %2.4f pr5 %2.4f pr6 %2.4f final %2.4f \r\n" 
-            % (np.mean(np.absolute(flows_all[0]), axis=None), np.mean(np.absolute(flows_all[1]), axis=None), np.mean(np.absolute(flows_all[2]), axis=None), 
-                np.mean(np.absolute(flows_all[3]), axis=None), np.mean(np.absolute(flows_all[4]), axis=None), np.mean(np.absolute(flows_all[5]), axis=None), 
-                np.mean(np.absolute(f1), axis=None)))
-
-        print("***Test: Epoch %03d Iter %04d: Loss1 %2.4f Loss2 %2.4f Loss3 %2.4f Loss4 %2.4f Loss5 %2.4f Loss6 %2.4f AEE %4.4f AAE %4.4f \r\n" 
-            % (epoch, trainIter, Loss1/maxTestIter, Loss2/maxTestIter, Loss3/maxTestIter, Loss4/maxTestIter, Loss5/maxTestIter, Loss6/maxTestIter, AEE, AAE))
+        accuracy = sum(np.equal(label_pred, label_gt)) / (testBatchSize * 101)
+        print("***Test: Epoch %03d Iter %04d: Loss1 %2.4f Loss2 %2.4f Loss3 %2.4f Loss4 %2.4f Loss5 %2.4f Loss6 %2.4f Loss7 %4.4f Accuracy %4.4f \r\n" 
+            % (epoch, trainIter, Loss1/maxTestIter, Loss2/maxTestIter, Loss3/maxTestIter, Loss4/maxTestIter, Loss5/maxTestIter, Loss6/maxTestIter, Loss6/maxTestIter, accuracy))
 
         
 

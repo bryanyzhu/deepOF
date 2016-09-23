@@ -120,7 +120,7 @@ def deep3D(inputs, outputs):
         return losses, flows_all, tf.image.resize_bilinear(flows, [436, 1024])
         # return losses, flows
 
-def flowNet(inputs, outputs, loss_weight):
+def flowNet(inputs, outputs, loss_weight, labels):
     """Creates the warp flow model.
 
     Args:
@@ -130,7 +130,7 @@ def flowNet(inputs, outputs, loss_weight):
     predicted next frames
     """
 
-    with slim.arg_scope([slim.conv2d, slim.conv2d_transpose], 
+    with slim.arg_scope([slim.conv2d, slim.fully_connected, slim.conv2d_transpose], 
                         activation_fn=tf.nn.relu,       # original use leaky ReLU
                         weights_initializer=tf.truncated_normal_initializer(0.0, 0.01),     # original use MSRA initializer
                         weights_regularizer=slim.l2_regularizer(0.0005)):
@@ -145,6 +145,17 @@ def flowNet(inputs, outputs, loss_weight):
         conv5_2 = slim.conv2d(conv5_1, 512, [3, 3], scope='conv5_2')
         conv6_1 = slim.conv2d(conv5_2, 1024, [3, 3], stride=2, scope='conv6_1')
         conv6_2 = slim.conv2d(conv6_1, 1024, [3, 3], scope='conv6_2')
+
+        # Action recognition
+        flatten6 = slim.flatten(conv6_2, scope='flatten6')
+        fc7 = slim.fully_connected(flatten6, 4096, scope='fc7')
+        dropout7 = slim.dropout(fc7, 0.5, scope='dropout7')
+        fc8 = slim.fully_connected(dropout7, 4096, scope='fc8')
+        dropout8 = slim.dropout(fc8, 0.5, scope='dropout8') 
+        logits = slim.fully_connected(dropout8, 101, activation_fn=None, scope='logits')
+        predictions = tf.nn.softmax(logits, name='predictions')
+
+        actionLoss = slim.losses.softmax_cross_entropy(predictions, tf.one_hot(labels, 101))
 
         # Hyper-params for computing unsupervised loss
         epsilon = tf.constant(0.001, name='epsilon')
@@ -213,13 +224,11 @@ def flowNet(inputs, outputs, loss_weight):
         
         all_loss = loss_weight[0]*loss1 + loss_weight[1]*loss2 + loss_weight[2]*loss3 + loss_weight[3]*loss4 + loss_weight[4]*loss5 + loss_weight[5]*loss6
         slim.losses.add_loss(all_loss)
-        losses = [loss1, loss2, loss3, loss4, loss5, loss6]
+        losses = [loss1, loss2, loss3, loss4, loss5, loss6, actionLoss]
         # pr1 = tf.mul(tf.constant(20.0), pr1)
-
-        final = tf.image.resize_bilinear(pr1, [436, 1024])
         flows_all = [pr1, pr2, pr3, pr4, pr5, pr6]
 
-        return losses, flows_all, final
+        return losses, flows_all, predictions
 
 def loss_interp(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth):
 
