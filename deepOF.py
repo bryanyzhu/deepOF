@@ -1,11 +1,12 @@
 import os, sys
 import argparse
-# from ucf101train import train
-from train import train
+from flyingChairsTrain import train
+# from train import train
 
 def deepOF(data_path):
-	MPISintel = True
-	UCF101 = False
+	MPISintel = False
+	ucf101 = False
+	flyingChairs = True
 
 	if MPISintel:
 		image_size = [256, 512]
@@ -13,9 +14,13 @@ def deepOF(data_path):
 		split = 0.8
 		passKey = 'final'		# clean or final
 		train(data_path, image_size, split, passKey)
-	elif UCF101:
-		image_size = [256, 320]
+	elif ucf101:
+		image_size = [224, 224]
 		train(data_path, image_size)
+	elif flyingChairs:
+		image_size = [192, 256]
+		train(data_path, image_size)
+
 
 def main():
 	# Example usage: python deepOF.py ~/Documents/MPI-Sintel/

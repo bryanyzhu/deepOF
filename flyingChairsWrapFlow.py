@@ -3,7 +3,7 @@
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 
-def deep3D(inputs, outputs, loss_weight, labels):
+def deep3D(inputs, outputs, loss_weight):
     """Creates the warp flow model.
 
     Args:
@@ -34,108 +34,91 @@ def deep3D(inputs, outputs, loss_weight, labels):
         pool5 = slim.max_pool2d(conv5_2, [2, 2], scope='pool5')
         flatten5 = slim.flatten(pool5, scope='flatten5')
         fc6 = slim.fully_connected(flatten5, 4096, scope='fc6')
-        dropout6 = slim.dropout(fc6, 0.9, scope='dropout6')
+        dropout6 = slim.dropout(fc6, 0.5, scope='dropout6')
         fc7 = slim.fully_connected(dropout6, 4096, scope='fc7')
-        dropout7 = slim.dropout(fc7, 0.9, scope='dropout7')
-        fc8 = slim.fully_connected(dropout7, 101, scope='fc8')
-        logits = slim.fully_connected(fc8, 101, activation_fn=None, scope='logits')
-
-        actionLoss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits, labels))
-
-        predictions = tf.nn.softmax(logits, name='predictions')
-        # actionLoss = slim.losses.softmax_cross_entropy(predictions, tf.one_hot(labels, 101))
-
-        zeroCon = tf.constant(0)
-        losses = [zeroCon, zeroCon, zeroCon, zeroCon, zeroCon, zeroCon, actionLoss]
-        flows_all = [zeroCon, zeroCon, zeroCon, zeroCon, zeroCon, zeroCon]
-
-        slim.losses.add_loss(actionLoss)
+        dropout7 = slim.dropout(fc7, 0.5, scope='dropout7')
         
-        return losses, flows_all, predictions
-        # channels = 40       # Maybe 60 later
-        # reshape_h = pool4.get_shape()[1].value/2
-        # reshape_w = pool4.get_shape()[2].value/2
+        channels = 40       # Maybe 60 later
+        reshape_h = pool4.get_shape()[1].value/2
+        reshape_w = pool4.get_shape()[2].value/2
      
-        # fc8_flow = slim.fully_connected(dropout7, channels*reshape_h*reshape_w, scope='d5')
-        # bn_pool1 = slim.batch_norm(pool1, scope='bn_pool1')
-        # bn_pool2 = slim.batch_norm(pool2, scope='bn_pool2')
-        # bn_pool3 = slim.batch_norm(pool3, scope='bn_pool3')
-        # bn_pool4 = slim.batch_norm(pool4, scope='bn_pool4')
+        fc8 = slim.fully_connected(dropout6, channels*reshape_h*reshape_w, scope='d5')
+        bn_pool1 = slim.batch_norm(pool1, scope='bn_pool1')
+        bn_pool2 = slim.batch_norm(pool2, scope='bn_pool2')
+        bn_pool3 = slim.batch_norm(pool3, scope='bn_pool3')
+        bn_pool4 = slim.batch_norm(pool4, scope='bn_pool4')
 
-        # # Maybe try no batch norm
-        # d1 = slim.conv2d(bn_pool1, channels, [3, 3], scope='d1')
-        # d2 = slim.conv2d(bn_pool2, channels, [3, 3], scope='d2')
-        # d3 = slim.conv2d(bn_pool3, channels, [3, 3], scope='d3')
-        # d4 = slim.conv2d(bn_pool4, channels, [3, 3], scope='d4')
-        # d5 = tf.reshape(fc8_flow, [-1, reshape_h, reshape_w, channels])
+        d1 = slim.conv2d(bn_pool1, channels, [3, 3], scope='d1')
+        d2 = slim.conv2d(bn_pool2, channels, [3, 3], scope='d2')
+        d3 = slim.conv2d(bn_pool3, channels, [3, 3], scope='d3')
+        d4 = slim.conv2d(bn_pool4, channels, [3, 3], scope='d4')
+        d5 = tf.reshape(fc8, [-1, reshape_h, reshape_w, channels])
 
-        # scale = 1
-        # deconv_1 = slim.conv2d_transpose(d1, channels, [2*scale, 2*scale], stride=scale, scope='deconv_1')
-        # scale *= 2
-        # deconv_2 = slim.conv2d_transpose(d2, channels, [2*scale, 2*scale], stride=scale, scope='deconv_2')
-        # scale *= 2
-        # deconv_3 = slim.conv2d_transpose(d3, channels, [2*scale, 2*scale], stride=scale, scope='deconv_3')
-        # scale *= 2
-        # deconv_4 = slim.conv2d_transpose(d4, channels, [2*scale, 2*scale], stride=scale, scope='deconv_4')
-        # scale *= 2
-        # deconv_5 = slim.conv2d_transpose(d5, channels, [2*scale, 2*scale], stride=scale, scope='deconv_5')
-        # flows = tf.add_n([deconv_1, deconv_2, deconv_3, deconv_4, deconv_5])
+        scale = 1
+        deconv_1 = slim.conv2d_transpose(d1, channels, [2*scale, 2*scale], stride=scale, scope='up_conv1')
+        scale *= 2
+        deconv_2 = slim.conv2d_transpose(d2, channels, [2*scale, 2*scale], stride=scale, scope='up_conv2')
+        scale *= 2
+        deconv_3 = slim.conv2d_transpose(d3, channels, [2*scale, 2*scale], stride=scale, scope='up_conv3')
+        scale *= 2
+        deconv_4 = slim.conv2d_transpose(d4, channels, [2*scale, 2*scale], stride=scale, scope='up_conv4')
+        scale *= 2
+        deconv_5 = slim.conv2d_transpose(d5, channels, [2*scale, 2*scale], stride=scale, scope='up_conv5')
+        flows = tf.add_n([deconv_1, deconv_2, deconv_3, deconv_4, deconv_5])
 
-        # scale = 2
-        # # Add multiple intermediate loss
-        # # d1_up = slim.conv2d_transpose(d1, channels, [2*scale, 2*scale], stride=scale, scope='d1_up')
-        # d1_flows = slim.conv2d(d1, 2, [3, 3], activation_fn=None, scope='d1_flows')
-        # # d2_up = slim.conv2d_transpose(d2, channels, [2*scale, 2*scale], stride=scale, scope='d2_up')
-        # d2_flows = slim.conv2d(d2, 2, [3, 3], activation_fn=None, scope='d2_flows')
-        # # d3_up = slim.conv2d_transpose(d3, channels, [2*scale, 2*scale], stride=scale, scope='d3_up')
-        # d3_flows = slim.conv2d(d3, 2, [3, 3], activation_fn=None, scope='d3_flows')
-        # # d4_up = slim.conv2d_transpose(d4, channels, [2*scale, 2*scale], stride=scale, scope='d4_up')
-        # d4_flows = slim.conv2d(d4, 2, [3, 3], activation_fn=None, scope='d4_flows')
-        # # d5_up = slim.conv2d_transpose(d5, channels, [2*scale, 2*scale], stride=scale, scope='d5_up')
-        # d5_flows = slim.conv2d(d5, 2, [3, 3], activation_fn=None, scope='d5_flows')
+        scale = 2
+        # Add multiple intermediate loss
+        d1_up = slim.conv2d_transpose(d1, channels, [2*scale, 2*scale], stride=scale, scope='up_d1')
+        d1_flows = slim.conv2d(d1_up, 2, [3, 3], activation_fn=None, scope='d1_flows')
+        d2_up = slim.conv2d_transpose(d2, channels, [2*scale, 2*scale], stride=scale, scope='up_d2')
+        d2_flows = slim.conv2d(d2_up, 2, [3, 3], activation_fn=None, scope='d2_flows')
+        d3_up = slim.conv2d_transpose(d3, channels, [2*scale, 2*scale], stride=scale, scope='up_d3')
+        d3_flows = slim.conv2d(d3_up, 2, [3, 3], activation_fn=None, scope='d3_flows')
+        d4_up = slim.conv2d_transpose(d4, channels, [2*scale, 2*scale], stride=scale, scope='up_d4')
+        d4_flows = slim.conv2d(d4_up, 2, [3, 3], activation_fn=None, scope='d4_flows')
+        d5_up = slim.conv2d_transpose(d5, channels, [2*scale, 2*scale], stride=scale, scope='up_d5')
+        d5_flows = slim.conv2d(d5_up, 2, [3, 3], activation_fn=None, scope='d5_flows')
 
-        # flows = slim.conv2d_transpose(flows, channels, [2*scale, 2*scale], stride=scale, scope='deconv_final')
-        # flows = slim.conv2d(flows, 2, [3, 3], activation_fn=None, scope='final_conv')
+        flows = slim.conv2d_transpose(flows, channels, [2*scale, 2*scale], stride=scale, scope='deconv_final')
+        flows = slim.conv2d(flows, 2, [3, 3], activation_fn=None, scope='final_conv')
             
-        # epsilon = tf.constant(0.001, name='epsilon')
-        # alpha_c = tf.constant(0.4, name='alpha_c')
-        # alpha_s = tf.constant(0.3, name='alpha_s')
-        # lambda_smooth = tf.constant(1.0, name='lambda_smooth')
+        epsilon = tf.constant(0.001, name='epsilon')
+        alpha_c = tf.constant(0.25, name='alpha_c')
+        alpha_s = tf.constant(0.37, name='alpha_s')
+        lambda_smooth = tf.constant(1.0, name='lambda_smooth')
 
-        # d1_input = tf.image.resize_bilinear(inputs, [d1_flows.get_shape()[1].value, d1_flows.get_shape()[2].value])
-        # d1_output = tf.image.resize_bilinear(outputs, [d1_flows.get_shape()[1].value, d1_flows.get_shape()[2].value])
-        # d1_loss = loss_interp(d1_flows, d1_input, d1_output, epsilon, alpha_c, alpha_s, lambda_smooth)
+        d1_input = tf.image.resize_bilinear(inputs, [d1_flows.get_shape()[1].value, d1_flows.get_shape()[2].value])
+        d1_output = tf.image.resize_bilinear(outputs, [d1_flows.get_shape()[1].value, d1_flows.get_shape()[2].value])
+        d1_loss = loss_interp(d1_flows, d1_input, d1_output, epsilon, alpha_c, alpha_s, lambda_smooth)
 
-        # d2_input = tf.image.resize_bilinear(inputs, [d2_flows.get_shape()[1].value, d2_flows.get_shape()[2].value])
-        # d2_output = tf.image.resize_bilinear(outputs, [d2_flows.get_shape()[1].value, d2_flows.get_shape()[2].value])
-        # d2_loss = loss_interp(d2_flows, d2_input, d2_output, epsilon, alpha_c, alpha_s, lambda_smooth)
+        d2_input = tf.image.resize_bilinear(inputs, [d2_flows.get_shape()[1].value, d2_flows.get_shape()[2].value])
+        d2_output = tf.image.resize_bilinear(outputs, [d2_flows.get_shape()[1].value, d2_flows.get_shape()[2].value])
+        d2_loss = loss_interp(d2_flows, d2_input, d2_output, epsilon, alpha_c, alpha_s, lambda_smooth)
 
-        # d3_input = tf.image.resize_bilinear(inputs, [d3_flows.get_shape()[1].value, d3_flows.get_shape()[2].value])
-        # d3_output = tf.image.resize_bilinear(outputs, [d3_flows.get_shape()[1].value, d3_flows.get_shape()[2].value])
-        # d3_loss = loss_interp(d3_flows, d3_input, d3_output, epsilon, alpha_c, alpha_s, lambda_smooth)
+        d3_input = tf.image.resize_bilinear(inputs, [d3_flows.get_shape()[1].value, d3_flows.get_shape()[2].value])
+        d3_output = tf.image.resize_bilinear(outputs, [d3_flows.get_shape()[1].value, d3_flows.get_shape()[2].value])
+        d3_loss = loss_interp(d3_flows, d3_input, d3_output, epsilon, alpha_c, alpha_s, lambda_smooth)
 
-        # d4_input = tf.image.resize_bilinear(inputs, [d4_flows.get_shape()[1].value, d4_flows.get_shape()[2].value])
-        # d4_output = tf.image.resize_bilinear(outputs, [d4_flows.get_shape()[1].value, d4_flows.get_shape()[2].value])
-        # d4_loss = loss_interp(d4_flows, d4_input, d4_output, epsilon, alpha_c, alpha_s, lambda_smooth)
+        d4_input = tf.image.resize_bilinear(inputs, [d4_flows.get_shape()[1].value, d4_flows.get_shape()[2].value])
+        d4_output = tf.image.resize_bilinear(outputs, [d4_flows.get_shape()[1].value, d4_flows.get_shape()[2].value])
+        d4_loss = loss_interp(d4_flows, d4_input, d4_output, epsilon, alpha_c, alpha_s, lambda_smooth)
 
-        # d5_input = tf.image.resize_bilinear(inputs, [d5_flows.get_shape()[1].value, d5_flows.get_shape()[2].value])
-        # d5_output = tf.image.resize_bilinear(outputs, [d5_flows.get_shape()[1].value, d5_flows.get_shape()[2].value])
-        # d5_loss = loss_interp(d5_flows, d5_input, d5_output, epsilon, alpha_c, alpha_s, lambda_smooth)
+        d5_input = tf.image.resize_bilinear(inputs, [d5_flows.get_shape()[1].value, d5_flows.get_shape()[2].value])
+        d5_output = tf.image.resize_bilinear(outputs, [d5_flows.get_shape()[1].value, d5_flows.get_shape()[2].value])
+        d5_loss = loss_interp(d5_flows, d5_input, d5_output, epsilon, alpha_c, alpha_s, lambda_smooth)
 
-        # final_loss = loss_interp(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth)
+        final_loss = loss_interp(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth)
 
         # loss_weight = [16,8,4,2,1,32]
-        # all_loss = loss_weight[0]*d1_loss + loss_weight[1]*d2_loss + loss_weight[2]*d3_loss + loss_weight[3]*d4_loss + loss_weight[4]*d5_loss + loss_weight[5]*final_loss
-        # # slim.losses.add_loss(all_loss)
-        # slim.losses.add_loss(actionLoss)
-        # losses = [d1_loss, d2_loss, d3_loss, d4_loss, d5_loss, final_loss, actionLoss]
-        # flows_all = [flows, d1_flows, d2_flows, d3_flows, d4_flows, d5_flows]
+        all_loss = loss_weight[0]*d1_loss + loss_weight[1]*d2_loss + loss_weight[2]*d3_loss + loss_weight[3]*d4_loss + loss_weight[4]*d5_loss + loss_weight[5]*final_loss
+        slim.losses.add_loss(all_loss)
+        losses = [d1_loss, d2_loss, d3_loss, d4_loss, d5_loss, final_loss]
+        flows_all = [d1_flows, d2_flows, d3_flows, d4_flows, d5_flows]
 
-        # # return losses, flows_all, tf.image.resize_bilinear(flows, [436, 1024])
-        # return losses, flows_all, predictions
+        return losses, flows_all, tf.image.resize_bilinear(flows, [384, 512])
         # return losses, flows
 
-def flowNet(inputs, outputs, loss_weight, labels):
+def flowNet(inputs, outputs, loss_weight):
     """Creates the warp flow model.
 
     Args:
@@ -145,7 +128,7 @@ def flowNet(inputs, outputs, loss_weight, labels):
     predicted next frames
     """
 
-    with slim.arg_scope([slim.conv2d, slim.fully_connected, slim.conv2d_transpose], 
+    with slim.arg_scope([slim.conv2d, slim.conv2d_transpose], 
                         activation_fn=tf.nn.relu,       # original use leaky ReLU
                         weights_initializer=tf.truncated_normal_initializer(0.0, 0.01),     # original use MSRA initializer
                         weights_regularizer=slim.l2_regularizer(0.0005)):
@@ -160,17 +143,6 @@ def flowNet(inputs, outputs, loss_weight, labels):
         conv5_2 = slim.conv2d(conv5_1, 512, [3, 3], scope='conv5_2')
         conv6_1 = slim.conv2d(conv5_2, 1024, [3, 3], stride=2, scope='conv6_1')
         conv6_2 = slim.conv2d(conv6_1, 1024, [3, 3], scope='conv6_2')
-
-        # Action recognition
-        flatten6 = slim.flatten(conv6_2, scope='flatten6')
-        fc7 = slim.fully_connected(flatten6, 4096, scope='fc7')
-        dropout7 = slim.dropout(fc7, 0.5, scope='dropout7')
-        fc8 = slim.fully_connected(dropout7, 4096, scope='fc8')
-        dropout8 = slim.dropout(fc8, 0.5, scope='dropout8') 
-        logits = slim.fully_connected(dropout8, 101, activation_fn=None, scope='logits')
-        predictions = tf.nn.softmax(logits, name='predictions')
-
-        actionLoss = slim.losses.softmax_cross_entropy(predictions, tf.one_hot(labels, 101))
 
         # Hyper-params for computing unsupervised loss
         epsilon = tf.constant(0.001, name='epsilon')
@@ -239,11 +211,13 @@ def flowNet(inputs, outputs, loss_weight, labels):
         
         all_loss = loss_weight[0]*loss1 + loss_weight[1]*loss2 + loss_weight[2]*loss3 + loss_weight[3]*loss4 + loss_weight[4]*loss5 + loss_weight[5]*loss6
         slim.losses.add_loss(all_loss)
-        losses = [loss1, loss2, loss3, loss4, loss5, loss6, actionLoss]
+        losses = [loss1, loss2, loss3, loss4, loss5, loss6]
         # pr1 = tf.mul(tf.constant(20.0), pr1)
+
+        final = tf.image.resize_bilinear(pr1, [436, 1024])
         flows_all = [pr1, pr2, pr3, pr4, pr5, pr6]
 
-        return losses, flows_all, predictions
+        return losses, flows_all, final
 
 def loss_interp(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth):
 
