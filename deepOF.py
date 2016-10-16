@@ -18,7 +18,7 @@ def deepOF(data_path):
 		image_size = [224, 224]
 		train(data_path, image_size)
 	elif flyingChairs:
-		image_size = [192, 256]
+		image_size = [320, 448]
 		train(data_path, image_size)
 
 

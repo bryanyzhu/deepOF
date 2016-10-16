@@ -4,13 +4,14 @@ import flyingChairsWrapFlow
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 import numpy as np
+import random
 import subprocess
 import cv2
 import math
 import utils as utils
 
 
-tf.app.flags.DEFINE_string('train_log_dir', '/tmp/flyingChairs_flownet_v1/',
+tf.app.flags.DEFINE_string('train_log_dir', '/tmp/fc_flownet_intermediate_no_smooth/',
                     'Directory where to write event logs.')
 
 tf.app.flags.DEFINE_integer('batch_size', 4, 'The number of images in each batch.')
@@ -28,7 +29,7 @@ tf.app.flags.DEFINE_float('learning_rate', 0.000016, 'The learning rate')
 tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.5,
                    """Learning rate decay factor.""")
 
-tf.app.flags.DEFINE_float('num_epochs_per_decay', 18,
+tf.app.flags.DEFINE_float('num_epochs_per_decay', 20,
                    """Number of epochs after which learning rate decays.""")
 
 tf.app.flags.DEFINE_string('master', 'local',
@@ -45,7 +46,7 @@ class train:
         self.image_size = image_size
         self.origin_size = [384, 512]
         self.numLosses = 6
-        self.lambda_smooth = 1
+        self.lambda_smooth = 0.0
         self.flyingChairs = flyingChairsLoader(data_path, self.image_size)
         self.batch_size = FLAGS.batch_size
         self.maxEpochs = 110
@@ -88,7 +89,7 @@ class train:
         weights = np.zeros(f_shape)
         for i in range(f_shape[2]):
             weights[:, :, i, i] = bilinear
-        sess.run(var.assign(weights))        
+        sess.run(var.assign(weights))     
 
     def trainNet(self, batch_size):
 
@@ -99,7 +100,7 @@ class train:
         source_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
         target_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
         loss_weight = tf.placeholder(tf.float32, [self.numLosses])
-        loss, midFlows = flyingChairsWrapFlow.flowNet(source_img, target_img, loss_weight)
+        loss, midFlows, previous = flyingChairsWrapFlow.flowNet(source_img, target_img, loss_weight)
         print('Finished building Network.')
 
         init = tf.initialize_all_variables()
@@ -157,7 +158,7 @@ class train:
         
         display = 200        # number of iterations to display training log
         # Loss weights schedule
-        weight_L = [9,7,5,3,3,1]
+        weight_L = [16,8,4,2,1,0.5]
         for epoch in xrange(1, self.maxEpochs+1):
             print("Epoch %d: \r\n" % epoch)
             print("Learning Rate %f: \r\n" % lr)
@@ -165,33 +166,30 @@ class train:
             # 5558 max iterations
             # print self.maxIterPerEpoch
             for iteration in xrange(1, self.maxIterPerEpoch+1):
-                source, target, flow = self.flyingChairs.sampleTrain(self.batch_size, iteration)   
-                ###################################################################
-                # Data augmentation
-                # for batch_idx in xrange(self.batch_size):
-                #     cv2.resize(source[batch_idx,:,:,:]
-                # source_tensor = tf.convert_to_tensor(source, dtype=tf.float32)
-                # tf.image.flip_left_right(source_tensor[0,:,:,:])
-                # source = source_tensor.eval(session=sess)
-                ###################################################################
+                source, target, flow = self.flyingChairs.sampleTrain(self.batch_size, iteration)  
+
+                # source_geo, target_geo = self.geoAugmentation(source, target, sess)
+                ##################################################################
                 # Training
                 train_op.run(feed_dict = {source_img: source, target_img: target, loss_weight: weight_L, learning_rate: lr}, session = sess)
                 
                 if iteration % display == 0:
                 # if iteration == 1:
                     losses, flows_all, loss_sum = sess.run([loss, midFlows, total_loss], feed_dict={source_img: source, target_img: target, loss_weight: weight_L})
-                    # flow_error = ((flow_preds - flow) ** 2).mean(axis=None)/self.batch_size
-                    # Calculate endpoint error
-                    flow_preds = tf.image.resize_bilinear(flows_all[0], self.origin_size)
-                    AEE = utils.flow_ee(sess.run(flow_preds), flow)
-                    # AAE = utils.flow_ae(flow_preds, flow)
-                    print("---Train Batch(%d): Epoch %03d Iter %04d: AEE %4.4f Loss_sum %4.4f \r\n" % (self.batch_size, epoch, iteration, AEE, loss_sum))
-                    print("          PhotometricLoss1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["Charbonnier"], weight_L[0], losses[0]["Charbonnier"] * weight_L[0]))
-                    print("          PhotometricLoss2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["Charbonnier"], weight_L[1], losses[1]["Charbonnier"] * weight_L[1]))
-                    print("          PhotometricLoss3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["Charbonnier"], weight_L[2], losses[2]["Charbonnier"] * weight_L[2]))
-                    print("          PhotometricLoss4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["Charbonnier"], weight_L[3], losses[3]["Charbonnier"] * weight_L[3]))
-                    print("          PhotometricLoss5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["Charbonnier"], weight_L[4], losses[4]["Charbonnier"] * weight_L[4]))
-                    print("          PhotometricLoss6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["Charbonnier"], weight_L[5], losses[5]["Charbonnier"] * weight_L[5]))
+                    
+                    print("---Train Batch(%d): Epoch %03d Iter %04d: Loss_sum %4.4f \r\n" % (self.batch_size, epoch, iteration, loss_sum))
+                    # print("          PhotometricLoss1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["Charbonnier_predict"], weight_L[0], losses[0]["Charbonnier_predict"] * weight_L[0]))
+                    # print("          PhotometricLoss2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["Charbonnier_predict"], weight_L[1], losses[1]["Charbonnier_predict"] * weight_L[1]))
+                    # print("          PhotometricLoss3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["Charbonnier_predict"], weight_L[2], losses[2]["Charbonnier_predict"] * weight_L[2]))
+                    # print("          PhotometricLoss4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["Charbonnier_predict"], weight_L[3], losses[3]["Charbonnier_predict"] * weight_L[3]))
+                    # print("          PhotometricLoss5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["Charbonnier_predict"], weight_L[4], losses[4]["Charbonnier_predict"] * weight_L[4]))
+                    # print("          PhotometricLoss6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["Charbonnier_predict"], weight_L[5], losses[5]["Charbonnier_predict"] * weight_L[5]))
+                    print("          PhotometricLoss1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["Charbonnier_reconstruct"], weight_L[0], losses[0]["Charbonnier_reconstruct"] * weight_L[0]))
+                    print("          PhotometricLoss2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["Charbonnier_reconstruct"], weight_L[1], losses[1]["Charbonnier_reconstruct"] * weight_L[1]))
+                    print("          PhotometricLoss3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["Charbonnier_reconstruct"], weight_L[2], losses[2]["Charbonnier_reconstruct"] * weight_L[2]))
+                    print("          PhotometricLoss4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["Charbonnier_reconstruct"], weight_L[3], losses[3]["Charbonnier_reconstruct"] * weight_L[3]))
+                    print("          PhotometricLoss5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["Charbonnier_reconstruct"], weight_L[4], losses[4]["Charbonnier_reconstruct"] * weight_L[4]))
+                    print("          PhotometricLoss6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["Charbonnier_reconstruct"], weight_L[5], losses[5]["Charbonnier_reconstruct"] * weight_L[5]))
                     print("          SmoothnessLossU1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["U_loss"], weight_L[0]*self.lambda_smooth, losses[0]["U_loss"] * weight_L[0]*self.lambda_smooth))
                     print("          SmoothnessLossU2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["U_loss"], weight_L[1]*self.lambda_smooth, losses[1]["U_loss"] * weight_L[1]*self.lambda_smooth))
                     print("          SmoothnessLossU3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["U_loss"], weight_L[2]*self.lambda_smooth, losses[2]["U_loss"] * weight_L[2]*self.lambda_smooth))
@@ -205,9 +203,14 @@ class train:
                     print("          SmoothnessLossV5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["V_loss"], weight_L[4]*self.lambda_smooth, losses[4]["V_loss"] * weight_L[4]*self.lambda_smooth))
                     print("          SmoothnessLossV6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["V_loss"], weight_L[5]*self.lambda_smooth, losses[5]["V_loss"] * weight_L[5]*self.lambda_smooth))
 
+                    # print("***Test flow abs_mean: pr1 %2.4f pr2 %2.4f pr3 %2.4f pr4 %2.4f pr5 %2.4f pr6 %2.4f" 
+                    #     % (np.mean(np.absolute(flows_all[0]), axis=None), np.mean(np.absolute(flows_all[1]), axis=None), np.mean(np.absolute(flows_all[2]), axis=None), 
+                    #         np.mean(np.absolute(flows_all[3]), axis=None), np.mean(np.absolute(flows_all[4]), axis=None), np.mean(np.absolute(flows_all[5]), axis=None)))
+                    # print("***Test flow max: pr1 %2.4f \r\n" % (np.max(np.absolute(flows_all[0]))))
+                    # sys.exit()
                     assert not np.isnan(loss_sum).any(), 'Model diverged with loss = NaN'
                 # if iteration == int(math.floor(self.maxIterPerEpoch/2)) or iteration == self.maxIterPerEpoch:
-                if iteration % (display * 10) == 0:    # iteration == self.maxIterPerEpoch:    # 
+                if iteration % (display * 13) == 0:    # iteration == self.maxIterPerEpoch:    # 
                 # if True:
                     print("Start evaluating......")
                     self.evaluateNet(epoch, iteration, weight_L, sess)
@@ -231,19 +234,21 @@ class train:
         tf.get_variable_scope().reuse_variables()
         # sess_evaluate = tf.Session()
 
-        loss, midFlows = flyingChairsWrapFlow.flowNet(source_img, target_img, loss_weight)
+        loss, midFlows, prev = flyingChairsWrapFlow.flowNet(source_img, target_img, loss_weight)
         maxTestIter = int(math.floor(len(self.flyingChairs.valList)/testBatchSize))
         Loss1, Loss2, Loss3, Loss4, Loss5, Loss6 = 0,0,0,0,0,0
         U_Loss1, U_Loss2, U_Loss3, U_Loss4, U_Loss5, U_Loss6 = 0,0,0,0,0,0
         V_Loss1, V_Loss2, V_Loss3, V_Loss4, V_Loss5, V_Loss6 = 0,0,0,0,0,0
         flow_1, flow_2, flow_3, flow_4, flow_5, flow_6 = [],[],[],[],[],[]
         flow_gt = []
+        next_img = []
+        previous_img = []
         # print weight_L
         for iteration in xrange(1, maxTestIter+1):
             testBatch = self.flyingChairs.sampleVal(testBatchSize, iteration)
             source, target, flow = testBatch[0]
             imgPath = testBatch[1][0]
-            losses, flows_all = sess.run([loss, midFlows], feed_dict={source_img: source, target_img: target, loss_weight: weight_L})
+            losses, flows_all, prev_all = sess.run([loss, midFlows, prev], feed_dict={source_img: source, target_img: target, loss_weight: weight_L})
             # assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
             Loss1 += losses[0]["total"]
             Loss2 += losses[1]["total"]
@@ -264,12 +269,35 @@ class train:
             V_Loss5 += losses[4]["V_loss"]
             U_Loss6 += losses[5]["V_loss"]
 
-            flow_1.append(sess.run(tf.image.resize_bilinear(flows_all[0], self.origin_size)))
-            flow_2.append(sess.run(tf.image.resize_bilinear(flows_all[1], self.origin_size)))
-            flow_3.append(sess.run(tf.image.resize_bilinear(flows_all[2], self.origin_size)))
-            flow_4.append(sess.run(tf.image.resize_bilinear(flows_all[3], self.origin_size)))
-            flow_5.append(sess.run(tf.image.resize_bilinear(flows_all[4], self.origin_size)))
-            flow_6.append(sess.run(tf.image.resize_bilinear(flows_all[5], self.origin_size)))
+            flow1_list, flow2_list, flow3_list, flow4_list, flow5_list, flow6_list = [], [], [], [], [], []
+            # next_img_list = []
+            previous_img_list = []
+            # print next.shape
+            for batch_idx in xrange(testBatchSize):
+                flow1_list.append(np.expand_dims(cv2.resize(flows_all[0][batch_idx,:,:,:]*2, (self.origin_size[1], self.origin_size[0])), 0))
+                # flow2_list.append(np.expand_dims(flows_all[1][batch_idx,:,:,:], 0))
+                # flow3_list.append(np.expand_dims(flows_all[2][batch_idx,:,:,:], 0))
+                # flow4_list.append(np.expand_dims(flows_all[3][batch_idx,:,:,:], 0))
+                # flow5_list.append(np.expand_dims(flows_all[4][batch_idx,:,:,:], 0))
+                # flow6_list.append(np.expand_dims(flows_all[5][batch_idx,:,:,:], 0))
+                # next_img_list.append(np.expand_dims(cv2.resize(next_all[batch_idx,:,:,:], (self.origin_size[1], self.origin_size[0])), 0))
+                previous_img_list.append(np.expand_dims(cv2.resize(prev_all[batch_idx,:,:,:], (self.origin_size[1], self.origin_size[0])), 0))
+            flow_1.append(np.concatenate(flow1_list, axis=0))
+            # flow_2.append(np.concatenate(flow2_list, axis=0))
+            # flow_3.append(np.concatenate(flow3_list, axis=0))
+            # flow_4.append(np.concatenate(flow4_list, axis=0))
+            # flow_5.append(np.concatenate(flow5_list, axis=0))
+            # flow_6.append(np.concatenate(flow6_list, axis=0))
+            # next_img.append(np.concatenate(next_img_list, axis=0))
+            previous_img.append(np.concatenate(previous_img_list, axis=0))
+
+
+            # flow_1.append(sess.run(tf.image.resize_bilinear(flows_all[0], self.origin_size)))
+            # flow_2.append(sess.run(tf.image.resize_bilinear(flows_all[1], self.origin_size)))
+            # flow_3.append(sess.run(tf.image.resize_bilinear(flows_all[2], self.origin_size)))
+            # flow_4.append(sess.run(tf.image.resize_bilinear(flows_all[3], self.origin_size)))
+            # flow_5.append(sess.run(tf.image.resize_bilinear(flows_all[4], self.origin_size)))
+            # flow_6.append(sess.run(tf.image.resize_bilinear(flows_all[5], self.origin_size)))
 
             flow_gt.append(flow)
 
@@ -287,18 +315,31 @@ class train:
                 flowColor_1 = utils.flowToColor(flow_1[iteration-1][0,:,:,:].squeeze())
                 # print flowColor.max(), flowColor.min(), flowColor.mean()
                 cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_1" + ".jpeg", flowColor_1)
+
+                # next_frame = next_img[iteration-1][0,:,:,:]
+                # intensity_range = np.max(next_frame, axis=None) - np.min(next_frame, axis=None)
+                # # save predicted next frames
+                # next_frame = (next_frame - np.min(next_frame, axis=None)) * 255 / intensity_range
+                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_next_1" + ".jpeg", next_frame.astype(int))
+
+                prev_frame = previous_img[iteration-1][0,:,:,:]
+                intensity_range = np.max(prev_frame, axis=None) - np.min(prev_frame, axis=None)
+                # save predicted next frames
+                prev_frame = (prev_frame - np.min(prev_frame, axis=None)) * 255 / intensity_range
+                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_prev_1" + ".jpeg", prev_frame.astype(int))
+
                 # Visualize middle flows
 
-                flowColor_2 = utils.flowToColor(flow_2[iteration-1][0,:,:,:].squeeze())
-                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_2" + ".jpeg", flowColor_2)
-                flowColor_3 = utils.flowToColor(flow_3[iteration-1][0,:,:,:].squeeze())
-                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_3" + ".jpeg", flowColor_3)
-                flowColor_4 = utils.flowToColor(flow_4[iteration-1][0,:,:,:].squeeze())
-                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_4" + ".jpeg", flowColor_4)
-                flowColor_5 = utils.flowToColor(flow_5[iteration-1][0,:,:,:].squeeze())
-                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_5" + ".jpeg", flowColor_5)
-                flowColor_6 = utils.flowToColor(flow_6[iteration-1][0,:,:,:].squeeze())
-                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_6" + ".jpeg", flowColor_6)
+                # flowColor_2 = utils.flowToColor(flow_2[iteration-1][0,:,:,:].squeeze())
+                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_2" + ".jpeg", flowColor_2)
+                # flowColor_3 = utils.flowToColor(flow_3[iteration-1][0,:,:,:].squeeze())
+                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_3" + ".jpeg", flowColor_3)
+                # flowColor_4 = utils.flowToColor(flow_4[iteration-1][0,:,:,:].squeeze())
+                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_4" + ".jpeg", flowColor_4)
+                # flowColor_5 = utils.flowToColor(flow_5[iteration-1][0,:,:,:].squeeze())
+                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_5" + ".jpeg", flowColor_5)
+                # flowColor_6 = utils.flowToColor(flow_6[iteration-1][0,:,:,:].squeeze())
+                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_6" + ".jpeg", flowColor_6)
 
 
             # print("Iteration %d/%d is Done" % (iteration, maxTestIter))
@@ -320,7 +361,9 @@ class train:
         print("***Test flow abs_mean: pr1 %2.4f pr2 %2.4f pr3 %2.4f pr4 %2.4f pr5 %2.4f pr6 %2.4f" 
             % (np.mean(np.absolute(flows_all[0]), axis=None), np.mean(np.absolute(flows_all[1]), axis=None), np.mean(np.absolute(flows_all[2]), axis=None), 
                 np.mean(np.absolute(flows_all[3]), axis=None), np.mean(np.absolute(flows_all[4]), axis=None), np.mean(np.absolute(flows_all[5]), axis=None)))
-        print("***Test flow max: pr1 %2.4f \r\n" % (np.max(np.absolute(flows_all[0]))))
+        print("***Test flow max: pr1 %2.4f pr2 %2.4f pr3 %2.4f pr4 %2.4f pr5 %2.4f pr6 %2.4f" 
+            % (np.max(np.absolute(flows_all[0]), axis=None), np.max(np.absolute(flows_all[1]), axis=None), np.max(np.absolute(flows_all[2]), axis=None), 
+                np.max(np.absolute(flows_all[3]), axis=None), np.max(np.absolute(flows_all[4]), axis=None), np.max(np.absolute(flows_all[5]), axis=None)))
         Loss_sum = (Loss1*weight_L[0] + Loss2*weight_L[1] + Loss3*weight_L[2] + Loss4*weight_L[3] + Loss5*weight_L[4] + Loss6*weight_L[5])/maxTestIter
         ULoss_sum = (U_Loss1*weight_L[0] + U_Loss2*weight_L[1] + U_Loss3*weight_L[2] + U_Loss4*weight_L[3] + U_Loss5*weight_L[4] + U_Loss6*weight_L[5])/maxTestIter*self.lambda_smooth
         VLoss_sum = (V_Loss1*weight_L[0] + V_Loss2*weight_L[1] + V_Loss3*weight_L[2] + V_Loss4*weight_L[3] + V_Loss5*weight_L[4] + V_Loss6*weight_L[5])/maxTestIter*self.lambda_smooth

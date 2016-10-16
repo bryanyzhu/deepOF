@@ -10,18 +10,18 @@ def flowNet(inputs, outputs, loss_weight):
     Returns:
     predicted next frames
     """
-    # Mean subtraction (BGR)
-    mean = tf.constant([97.533268117955444, 99.238235788550085, 97.055973199626948], dtype=tf.float32, shape=[1,1,1,3], name="img_global_mean")
+    # Mean subtraction (BGR) for flying chairs
+    mean = tf.constant([97.533268117955444, 99.238235788550085, 97.055973199626948], dtype=tf.float32, name="img_global_mean")
+    # tf.tile(mean, [4,192,256,1])
     inputs = inputs - mean
     outputs = outputs - mean
+    # Scaling to 0 ~ 1 or -0.4 ~ 0.6?
+    inputs = tf.truediv(inputs, 255.0)
+    outputs = tf.truediv(outputs, 255.0)
 
-    # Scaling to 0 ~ 1 or -1 ~ 1?
-    inputs = tf.truediv(inputs, tf.constant(255.0))
-    outputs = tf.truediv(outputs, tf.constant(255.0))
-
-    # Add LRN 
-    inputsNorm = tf.nn.local_response_normalization(inputs, beta=0.7)
-    outputsNorm = tf.nn.local_response_normalization(outputs, beta=0.7)
+    # # Add LRN 
+    # inputs = tf.nn.local_response_normalization(inputs, beta=0.7)
+    # outputs = tf.nn.local_response_normalization(outputs, beta=0.7)
 
     with slim.arg_scope([slim.conv2d, slim.conv2d_transpose], 
                         activation_fn=tf.nn.elu,       # original use leaky ReLU, now we use elu
@@ -42,78 +42,84 @@ def flowNet(inputs, outputs, loss_weight):
         conv6_2 = slim.conv2d(conv6_1, 1024, [3, 3], scope='conv6_2')
 
         # Hyper-params for computing unsupervised loss
-        epsilon = tf.constant(0.001, name='epsilon') 
-        alpha_c = tf.constant(0.25, name='alpha_c')
-        alpha_s = tf.constant(0.37, name='alpha_s')
-        lambda_smooth = tf.constant(1.0, name='lambda_smooth')
+        epsilon = 0.001 
+        alpha_c = 0.25
+        alpha_s = 0.37
+        lambda_smooth = 0.0
         scale = 2
 
         # Expanding part
-        pr6 = slim.conv2d(conv6_2, 2, [3, 3], scope='pr6')
+        pr6 = slim.conv2d(conv6_2, 2, [3, 3], activation_fn=None, scope='pr6')
         h6 = pr6.get_shape()[1].value
         w6 = pr6.get_shape()[2].value
+        # pr6 = tf.pack([pr6[:,:,:,0]*w6, pr6[:,:,:,1]*h6], axis=3)
         # print h6, w6
-        pr6_input = tf.image.resize_bilinear(inputsNorm, [h6, w6])
-        pr6_output = tf.image.resize_bilinear(outputsNorm, [h6, w6])
-        flow_scale = tf.constant(0.3125)    
-        loss6 = loss_interp(pr6, pr6_input, pr6_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale)
+        pr6_input = tf.image.resize_bilinear(inputs, [h6, w6])
+        pr6_output = tf.image.resize_bilinear(outputs, [h6, w6])
+        flow_scale_6 = 0.3125    # (*20/64)
+        loss6, prev6 = loss_interp(pr6, pr6_input, pr6_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_6)
         upconv5 = slim.conv2d_transpose(conv6_2, 512, [2*scale, 2*scale], stride=scale, scope='upconv5')
-        pr6to5 = slim.conv2d_transpose(pr6, 2, [2*scale, 2*scale], stride=scale, scope='up_pr6to5')
+        pr6to5 = slim.conv2d_transpose(pr6, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr6to5')
         concat5 = tf.concat(3, [conv5_2, upconv5, pr6to5])
 
-        pr5 = slim.conv2d(concat5, 2, [3, 3], scope='pr5')
+        pr5 = slim.conv2d(concat5, 2, [3, 3], activation_fn=None, scope='pr5')
         h5 = pr5.get_shape()[1].value
         w5 = pr5.get_shape()[2].value
-        pr5_input = tf.image.resize_bilinear(inputsNorm, [h5, w5])
-        pr5_output = tf.image.resize_bilinear(outputsNorm, [h5, w5])
-        flow_scale = tf.constant(0.625)
-        loss5 = loss_interp(pr5, pr5_input, pr5_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale)
+        # pr5 = tf.pack([pr5[:,:,:,0]*w5, pr5[:,:,:,1]*h5], axis=3)
+        pr5_input = tf.image.resize_bilinear(inputs, [h5, w5])
+        pr5_output = tf.image.resize_bilinear(outputs, [h5, w5])
+        flow_scale_5 = 0.625    # (*20/32)
+        loss5, prev5 = loss_interp(pr5, pr5_input, pr5_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_5)
         upconv4 = slim.conv2d_transpose(concat5, 256, [2*scale, 2*scale], stride=scale, scope='upconv4')
-        pr5to4 = slim.conv2d_transpose(pr5, 2, [2*scale, 2*scale], stride=scale, scope='up_pr5to4')
-        concat4 = tf.concat(3, [conv4_2, upconv4, 2*pr5to4])
+        pr5to4 = slim.conv2d_transpose(pr5, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr5to4')
+        concat4 = tf.concat(3, [conv4_2, upconv4, pr5to4])
 
-        pr4 = slim.conv2d(concat4, 2, [3, 3], scope='pr4')
+        pr4 = slim.conv2d(concat4, 2, [3, 3], activation_fn=None, scope='pr4')
         h4 = pr4.get_shape()[1].value
         w4 = pr4.get_shape()[2].value
-        pr4_input = tf.image.resize_bilinear(inputsNorm, [h4, w4])
-        pr4_output = tf.image.resize_bilinear(outputsNorm, [h4, w4])
-        flow_scale = tf.constant(1.25)
-        loss4 = loss_interp(pr4, pr4_input, pr4_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale)
+        # pr4 = tf.pack([pr4[:,:,:,0]*w4, pr4[:,:,:,1]*h4], axis=3)
+        pr4_input = tf.image.resize_bilinear(inputs, [h4, w4])
+        pr4_output = tf.image.resize_bilinear(outputs, [h4, w4])
+        flow_scale_4 = 1.25    # (*20/16)
+        loss4, prev4 = loss_interp(pr4, pr4_input, pr4_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_4)
         upconv3 = slim.conv2d_transpose(concat4, 128, [2*scale, 2*scale], stride=scale, scope='upconv3')
-        pr4to3 = slim.conv2d_transpose(pr4, 2, [2*scale, 2*scale], stride=scale, scope='up_pr4to3')
-        concat3 = tf.concat(3, [conv3_2, upconv3, 2*pr4to3])
+        pr4to3 = slim.conv2d_transpose(pr4, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr4to3')
+        concat3 = tf.concat(3, [conv3_2, upconv3, pr4to3])
 
-        pr3 = slim.conv2d(concat3, 2, [3, 3], scope='pr3')
+        pr3 = slim.conv2d(concat3, 2, [3, 3], activation_fn=None, scope='pr3')
         h3 = pr3.get_shape()[1].value
         w3 = pr3.get_shape()[2].value
-        pr3_input = tf.image.resize_bilinear(inputsNorm, [h3, w3])
-        pr3_output = tf.image.resize_bilinear(outputsNorm, [h3, w3])
-        flow_scale = tf.constant(2.5)
-        loss3 = loss_interp(pr3, pr3_input, pr3_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale)
+        # pr3 = tf.pack([pr3[:,:,:,0]*w3, pr3[:,:,:,1]*h3], axis=3)
+        pr3_input = tf.image.resize_bilinear(inputs, [h3, w3])
+        pr3_output = tf.image.resize_bilinear(outputs, [h3, w3])
+        flow_scale_3 = 2.5    # (*20/8)
+        loss3, prev3 = loss_interp(pr3, pr3_input, pr3_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_3)
         upconv2 = slim.conv2d_transpose(concat3, 64, [2*scale, 2*scale], stride=scale, scope='upconv2')
-        pr3to2 = slim.conv2d_transpose(pr3, 2, [2*scale, 2*scale], stride=scale, scope='up_pr3to2')
-        concat2 = tf.concat(3, [conv2, upconv2, 2*pr3to2])
+        pr3to2 = slim.conv2d_transpose(pr3, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr3to2')
+        concat2 = tf.concat(3, [conv2, upconv2, pr3to2])
 
-        pr2 = slim.conv2d(concat2, 2, [3, 3], scope='pr2')
+        pr2 = slim.conv2d(concat2, 2, [3, 3], activation_fn=None, scope='pr2')
         h2 = pr2.get_shape()[1].value
         w2 = pr2.get_shape()[2].value
-        pr2_input = tf.image.resize_bilinear(inputsNorm, [h2, w2])
-        pr2_output = tf.image.resize_bilinear(outputsNorm, [h2, w2])
-        flow_scale = tf.constant(5.0)
-        loss2 = loss_interp(pr2, pr2_input, pr2_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale)
-
-        # Basic flownet up to conv2, no pr1
+        # pr2 = tf.pack([pr2[:,:,:,0]*w2, pr2[:,:,:,1]*h2], axis=3)
+        pr2_input = tf.image.resize_bilinear(inputs, [h2, w2])
+        pr2_output = tf.image.resize_bilinear(outputs, [h2, w2])
+        flow_scale_2 = 5.0    # (*20/4)
+        loss2, prev2 = loss_interp(pr2, pr2_input, pr2_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_2)
         upconv1 = slim.conv2d_transpose(concat2, 32, [2*scale, 2*scale], stride=scale, scope='upconv1')
-        pr2to1 = slim.conv2d_transpose(pr2, 2, [2*scale, 2*scale], stride=scale, scope='up_pr2to1')
-        concat1 = tf.concat(3, [upconv1, conv1, 2*pr2to1])
+        pr2to1 = slim.conv2d_transpose(pr2, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr2to1')
+        concat1 = tf.concat(3, [upconv1, conv1, pr2to1])
 
-        pr1 = slim.conv2d(concat1, 2, [3, 3], scope='pr1')
+        pr1 = slim.conv2d(concat1, 2, [3, 3], activation_fn=None, scope='pr1')
         h1 = pr1.get_shape()[1].value
         w1 = pr1.get_shape()[2].value
-        pr1_input = tf.image.resize_bilinear(inputsNorm, [h1, w1])
-        pr1_output = tf.image.resize_bilinear(outputsNorm, [h1, w1])
-        flow_scale = tf.constant(10.0)
-        loss1 = loss_interp(pr1, pr1_input, pr1_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale)
+        # pr1 = tf.pack([pr1[:,:,:,0]*w1, pr1[:,:,:,1]*h1], axis=3)
+        pr1_input = tf.image.resize_bilinear(inputs, [h1, w1])
+        pr1_output = tf.image.resize_bilinear(outputs, [h1, w1])
+        flow_scale_1 = 10.0    # (*20/2), 
+        # Like in flowNet, the final output optical flow (same resolution as input) values should be 20 times smaller than the ground truth. 
+        # The smalle the value, the easier to learn
+        loss1, prev1 = loss_interp(pr1, pr1_input, pr1_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_1)
         
         # Adding intermediate losses
         all_loss = loss_weight[0]*loss1["total"] + loss_weight[1]*loss2["total"] + loss_weight[2]*loss3["total"] + \
@@ -122,91 +128,116 @@ def flowNet(inputs, outputs, loss_weight):
 
         losses = [loss1, loss2, loss3, loss4, loss5, loss6]
         # pr1 = tf.mul(tf.constant(20.0), pr1)
-        flows_all = [pr1, pr2, pr3, pr4, pr5, pr6]
+        flows_all = [pr1*flow_scale_1, pr2*flow_scale_2, pr3*flow_scale_3, pr4*flow_scale_4, pr5*flow_scale_5, pr6*flow_scale_6]
 
-        return losses, flows_all
+        return losses, flows_all, prev1
 
 def loss_interp(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale):
 
     shape = inputs.get_shape()
     shape = [int(dim) for dim in shape]
-    inputs_flat = tf.reshape(inputs, [shape[0], -1, shape[3]])
-    outputs_flat = tf.reshape(outputs, [shape[0], -1, shape[3]])
+    num_batch = shape[0]
+    height = shape[1]
+    width = shape[2]
+    channels = shape[3]
+
+    inputs_flat = tf.reshape(inputs, [num_batch, -1, channels])
+    outputs_flat = tf.reshape(outputs, [num_batch, -1, channels])
 
     flows = tf.mul(flows, flow_scale)
-
-    flows = tf.reshape(flows, [shape[0], -1, 2])
+    flows = tf.reshape(flows, [num_batch, -1, 2])
     floor_flows = tf.to_int32(tf.floor(flows))
     weights_flows = flows - tf.floor(flows)
 
-    pos_x = tf.range(shape[1])
-    pos_x = tf.tile(tf.expand_dims(pos_x, 1), [1, shape[2]])
+    pos_x = tf.range(height)
+    pos_x = tf.tile(tf.expand_dims(pos_x, 1), [1, width])
     pos_x = tf.reshape(pos_x, [-1])
-    pos_y = tf.range(shape[2])
-    pos_y = tf.tile(tf.expand_dims(pos_y, 0), [shape[1], 1])
+    pos_y = tf.range(width)
+    pos_y = tf.tile(tf.expand_dims(pos_y, 0), [height, 1])
     pos_y = tf.reshape(pos_y, [-1])
+    zero = tf.zeros([], dtype='int32')
 
     batch, batch_1 = [], []
-    for b in range(shape[0]):
+    for b in range(num_batch):
         channel, channel_1 = [], []
-        for c in range(shape[3]):
-            # predicted positions
-            pos1 = (pos_x + floor_flows[b, :, 0])*shape[2] + (pos_y + floor_flows[b, :, 1] )
-            pos2 = (pos_x + floor_flows[b, :, 0] + 1)*shape[2] + (pos_y + floor_flows[b, :, 1] )
-            pos3 = (pos_x + floor_flows[b, :, 0])*shape[2] + (pos_y + floor_flows[b, :, 1] + 1)
-            pos4 = (pos_x + floor_flows[b, :, 0] + 1)*shape[2] + (pos_y + floor_flows[b, :, 1] + 1)
-            # pos5 = (pos_x - floor_flows[b, :, 0])*shape[2] + (pos_y - floor_flows[b, :, 1] )
-            # pos6 = (pos_x - floor_flows[b, :, 0] - 1)*shape[2] + (pos_y - floor_flows[b, :, 1] )
-            # pos7 = (pos_x - floor_flows[b, :, 0])*shape[2] + (pos_y - floor_flows[b, :, 1] - 1)
-            # pos8 = (pos_x - floor_flows[b, :, 0] - 1)*shape[2] + (pos_y - floor_flows[b, :, 1] - 1)
+        for c in range(channels):
 
-            zero = tf.zeros([], dtype='int32')
-            pos1 = tf.clip_by_value(pos1, zero, shape[1]*shape[2])
-            pos2 = tf.clip_by_value(pos2, zero, shape[1]*shape[2])
-            pos3 = tf.clip_by_value(pos3, zero, shape[1]*shape[2])
-            pos4 = tf.clip_by_value(pos4, zero, shape[1]*shape[2])
-            # pos5 = tf.clip_by_value(pos5, zero, shape[1]*shape[2])
-            # pos6 = tf.clip_by_value(pos6, zero, shape[1]*shape[2])
-            # pos7 = tf.clip_by_value(pos7, zero, shape[1]*shape[2])
-            # pos8 = tf.clip_by_value(pos8, zero, shape[1]*shape[2])
+            x = floor_flows[b, :, 0]
+            y = floor_flows[b, :, 1]
+            # x_min = tf.reduce_min(x)
+            # y_min = tf.reduce_min(y)
+            # # Make sure the flow starts from 0
+            # x = x - x_min
+            # y = y - y_min
+
+            x0 = x
+            x1 = x0 + 1
+            y0 = y
+            y1 = y0 + 1
+
+            # x0 = tf.clip_by_value(x0, zero, width-1)
+            # x1 = tf.clip_by_value(x1, zero, width-1)
+            # y0 = tf.clip_by_value(y0, zero, height-1)
+            # y1 = tf.clip_by_value(y1, zero, height-1)
+
+            # predicted positions
+            # pos1 = (pos_x + y0)*width + (pos_y + x0)
+            # pos2 = (pos_x + y1)*width + (pos_y + x0)
+            # pos3 = (pos_x + y0)*width + (pos_y + x1)
+            # pos4 = (pos_x + y1)*width + (pos_y + x1)
+            pos5 = (pos_x - y0)*width + (pos_y - x0)
+            pos6 = (pos_x - y1)*width + (pos_y - x0)
+            pos7 = (pos_x - y0)*width + (pos_y - x1)
+            pos8 = (pos_x - y1)*width + (pos_y - x1)
+            
+            # pos1 = tf.clip_by_value(pos1, zero, height*width)
+            # pos2 = tf.clip_by_value(pos2, zero, height*width)
+            # pos3 = tf.clip_by_value(pos3, zero, height*width)
+            # pos4 = tf.clip_by_value(pos4, zero, height*width)
+            pos5 = tf.clip_by_value(pos5, zero, height*width)
+            pos6 = tf.clip_by_value(pos6, zero, height*width)
+            pos7 = tf.clip_by_value(pos7, zero, height*width)
+            pos8 = tf.clip_by_value(pos8, zero, height*width)
 
             # get the corresponding pixels
-            pixel1 = tf.gather(inputs_flat[b, :, c], pos1)
-            pixel2 = tf.gather(inputs_flat[b, :, c], pos2)
-            pixel3 = tf.gather(inputs_flat[b, :, c], pos3)
-            pixel4 = tf.gather(inputs_flat[b, :, c], pos4)
-            # pixel5 = tf.gather(outputs_flat[b, :, c], pos5)
-            # pixel6 = tf.gather(outputs_flat[b, :, c], pos6)
-            # pixel7 = tf.gather(outputs_flat[b, :, c], pos7)
-            # pixel8 = tf.gather(outputs_flat[b, :, c], pos8)
+            # pixel1 = tf.gather(inputs_flat[b, :, c], pos1)
+            # pixel2 = tf.gather(inputs_flat[b, :, c], pos2)
+            # pixel3 = tf.gather(inputs_flat[b, :, c], pos3)
+            # pixel4 = tf.gather(inputs_flat[b, :, c], pos4)
+            pixel5 = tf.gather(outputs_flat[b, :, c], pos5)
+            pixel6 = tf.gather(outputs_flat[b, :, c], pos6)
+            pixel7 = tf.gather(outputs_flat[b, :, c], pos7)
+            pixel8 = tf.gather(outputs_flat[b, :, c], pos8)
 
             # linear interpretation of these predicted pixels
             xw = weights_flows[b, :, 0]
             yw = weights_flows[b, :, 1]
-            img = tf.mul(pixel1, (1-xw)*(1-yw)) + tf.mul(pixel2, xw*(1-yw)) + \
-                      tf.mul(pixel3, (1-xw)*yw) + tf.mul(pixel4, xw*yw)
-            # img_1 = tf.mul(pixel5, (1-xw)*(1-yw)) + tf.mul(pixel6, xw*(1-yw)) + \
-            #           tf.mul(pixel7, (1-xw)*yw) + tf.mul(pixel8, xw*yw)
-            channel.append(img)
-            # channel_1.append(img_1)
-        batch.append(tf.transpose(tf.pack(channel)))
-        # batch_1.append(tf.transpose(tf.pack(channel_1)))
-    preds = tf.pack(batch)
-    # reconstructs = tf.pack(batch_1)
+            # img = tf.mul(pixel1, (1-xw)*(1-yw)) + tf.mul(pixel2, (1-xw)*yw) + \
+            #           tf.mul(pixel3, xw*(1-yw)) + tf.mul(pixel4, xw*yw)
+            img_1 = tf.mul(pixel5, (1-xw)*(1-yw)) + tf.mul(pixel6, (1-xw)*yw) + \
+                      tf.mul(pixel7, xw*(1-yw)) + tf.mul(pixel8, xw*yw)
+            # channel.append(img)
+            channel_1.append(img_1)
+        # batch.append(tf.pack(channel, axis=1))
+        batch_1.append(tf.pack(channel_1, axis=1))
+    # preds = tf.pack(batch)
+    reconstructs = tf.pack(batch_1)
     
-    # L2 loss, also try SSIM loss and L1 loss
+    # L1 loss, also try SSIM loss
 
     # loss_reconstruct = tf.contrib.losses.sum_of_squares(reconstructs, inputs_flat)
     # slim.losses.add_loss(tf.minimum(loss_predict, loss_reconstruct))
 
     # Charbonnier penalty function
     # loss_min = tf.minimum(loss_predict, loss_reconstruct)
-    beta = tf.constant(255.0)
-    diff_predict = tf.mul(tf.sub(preds, outputs_flat), beta)
-    Charbonnier = tf.reduce_mean(tf.pow(tf.square(diff_predict) + tf.square(epsilon), alpha_c))
+    beta = 255.0
+    # diff_predict = tf.mul(tf.sub(preds, outputs_flat), beta)
+    diff_reconstruct = tf.mul(tf.sub(reconstructs, inputs_flat), beta)
+    # Charbonnier_predict = tf.reduce_mean(tf.pow(tf.square(diff_predict) + tf.square(epsilon), alpha_c))
+    Charbonnier_reconstruct = tf.reduce_mean(tf.pow(tf.square(diff_reconstruct) + tf.square(epsilon), alpha_c))
 
     # Smoothness loss
-    flow_vis = tf.reshape(flows,[shape[0], shape[1], shape[2], 2])
+    flow_vis = tf.reshape(flows,[num_batch, height, width, 2])
     flowx = flow_vis[:,:,:,0]
     flowy = flow_vis[:,:,:,1]
     # print flowx.get_shape()
@@ -218,16 +249,17 @@ def loss_interp(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth
     V_loss = tf.add_n([vx, vy])
     loss_smooth = tf.add_n([U_loss + V_loss])
 
-    total_loss = Charbonnier + lambda_smooth * loss_smooth
+    total_loss = Charbonnier_reconstruct + lambda_smooth * loss_smooth
     # Define a loss structure
     lossDict = {}
     lossDict["total"] = total_loss
-    lossDict["Charbonnier"] = Charbonnier
+    # lossDict["Charbonnier_predict"] = Charbonnier_predict
+    lossDict["Charbonnier_reconstruct"] = Charbonnier_reconstruct
     lossDict["U_loss"] = U_loss
     lossDict["V_loss"] = V_loss
 
-    return lossDict
-
+    return lossDict, tf.reshape(reconstructs, [num_batch, height, width, 3])
+    # return lossDict, tf.reshape(preds, [num_batch, height, width, 3]), tf.reshape(reconstructs, [num_batch, height, width, 3])
 
 def deep3D(inputs, outputs, loss_weight):
     """Creates the warp flow model.

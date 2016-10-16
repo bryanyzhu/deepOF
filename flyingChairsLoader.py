@@ -71,17 +71,11 @@ class flyingChairsLoader:
             # print source.shape
             flow = utils.readFlow(os.path.join(self.img_path, (frameID + "_flow.flo")))
             # print flow.shape
-
             source = cv2.resize(source, (self.image_size[1], self.image_size[0]))
             source_list.append(np.expand_dims(source, 0))
             target = cv2.resize(target, (self.image_size[1], self.image_size[0]))
             target_list.append(np.expand_dims(target ,0))
-            
-            # # Data augmentation
-            # # Random scaling
-            # scale_factor = random.uniform(0.9, 1.1)
-            # source_scale =
-            
+                        
             flow_gt.append(np.expand_dims(flow, 0))
         return np.concatenate(source_list, axis=0), np.concatenate(target_list, axis=0), np.concatenate(flow_gt, axis=0)
 
