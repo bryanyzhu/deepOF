@@ -11,14 +11,14 @@ import math
 import utils as utils
 
 
-tf.app.flags.DEFINE_string('train_log_dir', '/tmp/fc_flownet_intermediate_no_smooth/',
+tf.app.flags.DEFINE_string('train_log_dir', '/tmp/no_scale_smooth/',
                     'Directory where to write event logs.')
 
 tf.app.flags.DEFINE_integer('batch_size', 4, 'The number of images in each batch.')
 
 tf.app.flags.DEFINE_integer('overwrite', True, 'Overwrite existing directory.')
 
-tf.app.flags.DEFINE_integer('save_interval_epoch', 3,
+tf.app.flags.DEFINE_integer('save_interval_epoch', 30,
                      'The frequency with which the model is saved, in epoch.')
 
 tf.app.flags.DEFINE_integer('max_number_of_steps', 10000000,
@@ -29,7 +29,7 @@ tf.app.flags.DEFINE_float('learning_rate', 0.000016, 'The learning rate')
 tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.5,
                    """Learning rate decay factor.""")
 
-tf.app.flags.DEFINE_float('num_epochs_per_decay', 20,
+tf.app.flags.DEFINE_float('num_epochs_per_decay', 30,
                    """Number of epochs after which learning rate decays.""")
 
 tf.app.flags.DEFINE_string('master', 'local',
@@ -46,7 +46,7 @@ class train:
         self.image_size = image_size
         self.origin_size = [384, 512]
         self.numLosses = 6
-        self.lambda_smooth = 0.0
+        self.lambda_smooth = 0.5
         self.flyingChairs = flyingChairsLoader(data_path, self.image_size)
         self.batch_size = FLAGS.batch_size
         self.maxEpochs = 110
