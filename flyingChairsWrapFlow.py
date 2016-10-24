@@ -13,11 +13,22 @@ def flowNet(inputs, outputs, loss_weight):
     # Mean subtraction (BGR) for flying chairs
     mean = tf.constant([97.533268117955444, 99.238235788550085, 97.055973199626948], dtype=tf.float32, name="img_global_mean")
     # tf.tile(mean, [4,192,256,1])
-    inputs = inputs - mean
-    outputs = outputs - mean
+    #inputs = inputs - mean
+    #outputs = outputs - mean
     # Scaling to 0 ~ 1 or -0.4 ~ 0.6?
-    inputs = tf.truediv(inputs, 255.0)
-    outputs = tf.truediv(outputs, 255.0)
+    #inputs = tf.truediv(inputs, 255.0)
+    #outputs = tf.truediv(outputs, 255.0)
+
+    beta = 1.0
+    # diff_predict = tf.mul(tf.sub(preds, outputs_flat), beta)
+    img1 = inputs[0,:,:,:]
+    img2 = outputs[0,:,:,:]
+    diff_reconstruct = img1-img2
+    # print diff_reconstruct.get_shape()
+    # Charbonnier_predict = tf.reduce_mean(tf.pow(tf.square(diff_predict) + tf.square(epsilon), alpha_c))
+    Charbonnier_reconstruct = tf.reduce_mean(tf.pow(tf.square(diff_reconstruct) + tf.square(0.001), 0.25))
+
+
 
     # # Add LRN 
     # inputs = tf.nn.local_response_normalization(inputs, beta=0.7)
@@ -58,7 +69,7 @@ def flowNet(inputs, outputs, loss_weight):
         pr6_output = tf.image.resize_bilinear(outputs, [h6, w6])
         flow_scale_6 = 0.3125    # (*20/64)
         # pr6 = tf.mul(pr6, flow_scale_6)
-        loss6, prev6 = transformer(pr6, pr6_input, pr6_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_6)
+        loss6, prev6 = loss_interp(pr6, pr6_input, pr6_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_6)
         upconv5 = slim.conv2d_transpose(conv6_2, 512, [2*scale, 2*scale], stride=scale, scope='upconv5')
         pr6to5 = slim.conv2d_transpose(pr6, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr6to5')
         concat5 = tf.concat(3, [conv5_2, upconv5, pr6to5])
@@ -71,7 +82,7 @@ def flowNet(inputs, outputs, loss_weight):
         pr5_output = tf.image.resize_bilinear(outputs, [h5, w5])
         flow_scale_5 = 0.625    # (*20/32)
         # pr5 = tf.mul(pr5, flow_scale_5)
-        loss5, prev5 = transformer(pr5, pr5_input, pr5_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_5)
+        loss5, prev5 = loss_interp(pr5, pr5_input, pr5_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_5)
         upconv4 = slim.conv2d_transpose(concat5, 256, [2*scale, 2*scale], stride=scale, scope='upconv4')
         pr5to4 = slim.conv2d_transpose(pr5, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr5to4')
         concat4 = tf.concat(3, [conv4_2, upconv4, pr5to4])
@@ -84,7 +95,7 @@ def flowNet(inputs, outputs, loss_weight):
         pr4_output = tf.image.resize_bilinear(outputs, [h4, w4])
         flow_scale_4 = 1.25    # (*20/16)
         # pr4 = tf.mul(pr4, flow_scale_4)
-        loss4, prev4 = transformer(pr4, pr4_input, pr4_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_4)
+        loss4, prev4 = loss_interp(pr4, pr4_input, pr4_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_4)
         upconv3 = slim.conv2d_transpose(concat4, 128, [2*scale, 2*scale], stride=scale, scope='upconv3')
         pr4to3 = slim.conv2d_transpose(pr4, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr4to3')
         concat3 = tf.concat(3, [conv3_2, upconv3, pr4to3])
@@ -97,7 +108,7 @@ def flowNet(inputs, outputs, loss_weight):
         pr3_output = tf.image.resize_bilinear(outputs, [h3, w3])
         flow_scale_3 = 2.5    # (*20/8)
         # pr3 = tf.mul(pr3, flow_scale_3)
-        loss3, prev3 = transformer(pr3, pr3_input, pr3_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_3)
+        loss3, prev3 = loss_interp(pr3, pr3_input, pr3_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_3)
         upconv2 = slim.conv2d_transpose(concat3, 64, [2*scale, 2*scale], stride=scale, scope='upconv2')
         pr3to2 = slim.conv2d_transpose(pr3, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr3to2')
         concat2 = tf.concat(3, [conv2, upconv2, pr3to2])
@@ -110,7 +121,7 @@ def flowNet(inputs, outputs, loss_weight):
         pr2_output = tf.image.resize_bilinear(outputs, [h2, w2])
         flow_scale_2 = 5.0    # (*20/4)
         # pr2 = tf.mul(pr2, flow_scale_2)
-        loss2, prev2 = transformer(pr2, pr2_input, pr2_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_2)
+        loss2, prev2 = loss_interp(pr2, pr2_input, pr2_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_2)
         upconv1 = slim.conv2d_transpose(concat2, 32, [2*scale, 2*scale], stride=scale, scope='upconv1')
         pr2to1 = slim.conv2d_transpose(pr2, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr2to1')
         concat1 = tf.concat(3, [upconv1, conv1, pr2to1])
@@ -125,162 +136,18 @@ def flowNet(inputs, outputs, loss_weight):
         # pr1 = tf.mul(pr1, flow_scale_1)
         # Like in flowNet, the final output optical flow (same resolution as input) values should be 20 times smaller than the ground truth. 
         # The smalle the value, the easier to learn
-        loss1, prev1 = transformer(pr1, pr1_input, pr1_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_1)
+        loss1, prev1 = loss_interp(pr1, pr1_input, pr1_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_1)
         
         # Adding intermediate losses
         all_loss = loss_weight[0]*loss1["total"] + loss_weight[1]*loss2["total"] + loss_weight[2]*loss3["total"] + \
                     loss_weight[3]*loss4["total"] + loss_weight[4]*loss5["total"] + loss_weight[5]*loss6["total"]
         slim.losses.add_loss(all_loss)
 
-        losses = [loss1, loss2, loss3, loss4, loss5, loss6]
+        losses = [loss1, loss2, loss3, loss4, loss5, loss6, img1, img2]
         # pr1 = tf.mul(tf.constant(20.0), pr1)
         flows_all = [pr1*flow_scale_1, pr2*flow_scale_2, pr3*flow_scale_3, pr4*flow_scale_4, pr5*flow_scale_5, pr6*flow_scale_6]
         # flows_all = [pr1, pr2, pr3, pr4, pr5, pr6]
         return losses, flows_all, prev1
-
-def transformer(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale):
-    shape = inputs.get_shape()
-    shape = [int(dim) for dim in shape]
-    num_batch = shape[0]
-    height = shape[1]
-    width = shape[2]
-    channels = shape[3]
-
-    # inputs_flat = tf.reshape(inputs, [num_batch, -1, channels])
-    outputs_flat = tf.reshape(outputs, [num_batch, -1, channels])
-
-    flows = tf.mul(flows, flow_scale)
-    # flows = tf.reshape(flows, [num_batch, -1, 2])
-
-    # reconstructs = tf.zeros_like(inputs)
-    batch = []
-    for b in xrange(num_batch):
-        channel = []
-        for c in xrange(channels):
-            recons_img = []
-            for s in xrange(height):
-                for t in xrange(width):
-
-                    # px,py should be the sample coordinates on the source img, which is img2
-                    py = tf.add(tf.to_float(s), flows[b, s, t, 0])      # movement along horizontal
-                    px = tf.add(tf.to_float(t), flows[b, s, t, 1])      # movement along vertical
-
-                    # source_img = outputs[b, s, t, c]
-
-                    # Do interpolation
-                    recons_img.append(transformer_interp(outputs_flat[b, :, c], px, py, height, width))
-                    # recons_img.append(1.0)
-                    # recons_img.append(transformer_interp(outputs_flat[b, :, c], 2, 2, height, width))
-                    # recons_img.append(s + flows[b, s, t, 0])
-                    # print recons_img.get_shape()
-            recons_img = tf.reshape(recons_img, [height, width])
-            print recons_img.get_shape()
-            channel.append(recons_img)
-
-        batch.append(tf.pack(channel, axis=2))
-    # preds = tf.pack(batch)
-    reconstructs = tf.pack(batch)
-    # print reconstructs.get_shape()
-
-    # Charbonnier penalty function
-    # loss_min = tf.minimum(loss_predict, loss_reconstruct)
-    beta = 255.0
-    # diff_predict = tf.mul(tf.sub(preds, outputs_flat), beta)
-    diff_reconstruct = tf.mul(tf.sub(reconstructs, inputs), beta)
-    # print diff_reconstruct.get_shape()
-    # Charbonnier_predict = tf.reduce_mean(tf.pow(tf.square(diff_predict) + tf.square(epsilon), alpha_c))
-    Charbonnier_reconstruct = tf.reduce_mean(tf.pow(tf.square(diff_reconstruct) + tf.square(epsilon), alpha_c))
-
-    # Smoothness loss
-    # flow_vis = tf.reshape(flows,[num_batch, height, width, 2])
-    # flowx = flow_vis[:,:,:,0]
-    # flowy = flow_vis[:,:,:,1]
-    # print flowx.get_shape()
-    weights_1_array = tf.constant([0,0,0,0,1,-1,0,0,0,0,0,0,0,1,0,0,-1,0], dtype=tf.float32, shape=[3,3,2,2], name="FlowDeltaWeights")
-    flow_delta = tf.nn.conv2d(flows, weights_1_array, [1,1,1,1], padding="SAME")
-    # print flow_delta.get_shape()
-    U_loss = tf.reduce_mean(tf.pow(tf.square(flow_delta[:,:,:,0]) * flow_scale + tf.square(epsilon), alpha_s)) 
-    V_loss = tf.reduce_mean(tf.pow(tf.square(flow_delta[:,:,:,1]) * flow_scale + tf.square(epsilon), alpha_s)) 
-    loss_smooth = U_loss + V_loss
-    # ux = tf.reduce_mean(tf.pow(tf.square(tf.sub(flowx[:, :-1, :], flowx[:, 1:, :]) * flow_scale) + tf.square(epsilon), alpha_s))          # u(i,j) - u(i+1,j)
-    # uy = tf.reduce_mean(tf.pow(tf.square(tf.sub(flowx[:, :, :-1], flowx[:, :, 1:]) * flow_scale) + tf.square(epsilon), alpha_s))          # u(i,j) - u(i,j+1)
-    # vx = tf.reduce_mean(tf.pow(tf.square(tf.sub(flowy[:, :-1, :], flowy[:, 1:, :]) * flow_scale) + tf.square(epsilon), alpha_s))          # v(i,j) - v(i+1,j)
-    # vy = tf.reduce_mean(tf.pow(tf.square(tf.sub(flowy[:, :, :-1], flowy[:, :, 1:]) * flow_scale) + tf.square(epsilon), alpha_s))          # v(i,j) - v(i,j+1)
-    # U_loss = tf.add_n([ux, uy])
-    # V_loss = tf.add_n([vx, vy])
-    # loss_smooth = tf.add_n([U_loss + V_loss])
-
-    total_loss = Charbonnier_reconstruct + lambda_smooth * loss_smooth
-    # Define a loss structure
-    lossDict = {}
-    lossDict["total"] = total_loss
-    # lossDict["Charbonnier_predict"] = Charbonnier_predict
-    lossDict["Charbonnier_reconstruct"] = Charbonnier_reconstruct
-    lossDict["U_loss"] = U_loss
-    lossDict["V_loss"] = V_loss
-
-    return lossDict, reconstructs
-
-
-def transformer_interp(pic, px, py, H, W):
-    res = 0.0
-
-    # x = px
-    # y = py
-
-    # m = tf.floor(x)
-    # n = tf.floor(y)
-    # w = 0.0
-
-    # height_requirement = tf.logical_and(tf.greater_equal(m, 0), tf.less(m, H))
-    # width_requirement = tf.logical_and(tf.greater_equal(n, 0), tf.less(n, W))
-
-    # if tf.logical_and(height_requirement, width_requirement) is not None:
-    #     w = tf.maximum(0.0, 1 - tf.abs(x - m)) * tf.maximum(0.0, 1 - tf.abs(y - n))
-    #     m = tf.to_int32(m)
-    #     n = tf.to_int32(n)
-    #     res += w * pic[m * W + n]
-
-    # m = tf.floor(x) + 1.0
-    # n = tf.floor(y)
-    # w = 0.0
-
-    # height_requirement = tf.logical_and(tf.greater_equal(m, 0), tf.less(m, H))
-    # width_requirement = tf.logical_and(tf.greater_equal(n, 0), tf.less(n, W))
-
-    # if tf.logical_and(height_requirement, width_requirement) is not None:
-    #     w = tf.maximum(0.0, 1 - tf.abs(x - m)) * tf.maximum(0.0, 1 - tf.abs(y - n))
-    #     m = tf.to_int32(m)
-    #     n = tf.to_int32(n)
-    #     res += w * pic[m * W + n]
-
-    # m = tf.floor(x)
-    # n = tf.floor(y) + 1.0
-    # w = 0.0
-
-    # height_requirement = tf.logical_and(tf.greater_equal(m, 0), tf.less(m, H))
-    # width_requirement = tf.logical_and(tf.greater_equal(n, 0), tf.less(n, W))
-
-    # if tf.logical_and(height_requirement, width_requirement) is not None:
-    #     w = tf.maximum(0.0, 1 - tf.abs(x - m)) * tf.maximum(0.0, 1 - tf.abs(y - n))
-    #     m = tf.to_int32(m)
-    #     n = tf.to_int32(n)
-    #     res += w * pic[m * W + n]
-
-    # m = tf.floor(x) + 1.0
-    # n = tf.floor(y) + 1.0
-    # w = 0.0
-
-    # height_requirement = tf.logical_and(tf.greater_equal(m, 0), tf.less(m, H))
-    # width_requirement = tf.logical_and(tf.greater_equal(n, 0), tf.less(n, W))
-
-    # if tf.logical_and(height_requirement, width_requirement) is not None:
-    #     w = tf.maximum(0.0, 1 - tf.abs(x - m)) * tf.maximum(0.0, 1 - tf.abs(y - n))
-    #     m = tf.to_int32(m)
-    #     n = tf.to_int32(n)
-    #     res += w * pic[m * W + n]
-
-    return res
 
 
 def loss_interp(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale):
@@ -307,78 +174,62 @@ def loss_interp(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth
     pos_y = tf.tile(tf.expand_dims(pos_y, 0), [height, 1])
     pos_y = tf.reshape(pos_y, [-1])
     zero = tf.zeros([], dtype='int32')
+    zero_f = tf.zeros_like(pos_x, dtype='float32')
 
-    batch, batch_1 = [], []
+
+    batch = []
     for b in range(num_batch):
-        channel, channel_1 = [], []
+        channel = []
+        x = floor_flows[b, :, 0]
+        y = floor_flows[b, :, 1]
+        xw = weights_flows[b, :, 0]
+        yw = weights_flows[b, :, 1]
+
         for c in range(channels):
 
-            x = floor_flows[b, :, 0]
-            y = floor_flows[b, :, 1]
-            # x_min = tf.reduce_min(x)
-            # y_min = tf.reduce_min(y)
-            # # Make sure the flow starts from 0
-            # x = x - x_min
-            # y = y - y_min
-
-            x0 = x
+            x0 = pos_y + x
             x1 = x0 + 1
-            y0 = y
+            y0 = pos_x + y
             y1 = y0 + 1
 
-            x0 = tf.clip_by_value(x0, -width+1, width-1)
-            x1 = tf.clip_by_value(x1, -width+1, width-1)
-            y0 = tf.clip_by_value(y0, -height+1, height-1)
-            y1 = tf.clip_by_value(y1, -height+1, height-1)
+            cond_a = tf.logical_and((x0 >= 0), (x0 < width-1))
+            cond_b = tf.logical_and((x1 >= 0), (x1 < width-1))
+            cond_c = tf.logical_and((y0 >= 0), (y0 < height-1))
+            cond_d = tf.logical_and((y1 >= 0), (y1 < height-1))
+            # x0 = tf.clip_by_value(x0, zero, width-1)
+            # x1 = tf.clip_by_value(x1, zero, width-1)
+            # y0 = tf.clip_by_value(y0, zero, height-1)
+            # y1 = tf.clip_by_value(y1, zero, height-1)
 
-            # predicted positions
-            # pos1 = (pos_x + y0)*width + (pos_y + x0)
-            # pos2 = (pos_x + y1)*width + (pos_y + x0)
-            # pos3 = (pos_x + y0)*width + (pos_y + x1)
-            # pos4 = (pos_x + y1)*width + (pos_y + x1)
-            pos5 = (pos_x + y0)*width + (pos_y + x0)
-            pos6 = (pos_x + y1)*width + (pos_y + x0)
-            pos7 = (pos_x + y0)*width + (pos_y + x1)
-            pos8 = (pos_x + y1)*width + (pos_y + x1)
+            idx_a = y0 * width + x0
+            idx_b = y1 * width + x0
+            idx_c = y0 * width + x1
+            idx_d = y1 * width + x1
 
-            pos5 < 0
-            
-            assert (pos5 < 0).dtype == tf.bool
-            # pos1 = tf.clip_by_value(pos1, zero, height*width)
-            # pos2 = tf.clip_by_value(pos2, zero, height*width)
-            # pos3 = tf.clip_by_value(pos3, zero, height*width)
-            # pos4 = tf.clip_by_value(pos4, zero, height*width)
-            pos5 = tf.clip_by_value(pos5, zero, height*width)
-            pos6 = tf.clip_by_value(pos6, zero, height*width)
-            pos7 = tf.clip_by_value(pos7, zero, height*width)
-            pos8 = tf.clip_by_value(pos8, zero, height*width)
+            Ia = tf.gather(outputs_flat[b, :, c], idx_a)
+            Ib = tf.gather(outputs_flat[b, :, c], idx_b)
+            Ic = tf.gather(outputs_flat[b, :, c], idx_c)
+            Id = tf.gather(outputs_flat[b, :, c], idx_d)
 
-            # get the corresponding pixels
-            # pixel1 = tf.gather(inputs_flat[b, :, c], pos1)
-            # pixel2 = tf.gather(inputs_flat[b, :, c], pos2)
-            # pixel3 = tf.gather(inputs_flat[b, :, c], pos3)
-            # pixel4 = tf.gather(inputs_flat[b, :, c], pos4)
-            pixel5 = tf.gather(outputs_flat[b, :, c], pos5)
-            pixel6 = tf.gather(outputs_flat[b, :, c], pos6)
-            pixel7 = tf.gather(outputs_flat[b, :, c], pos7)
-            pixel8 = tf.gather(outputs_flat[b, :, c], pos8)
+            wa = (1-xw) * (1-yw)
+            wb = (1-xw) * yw
+            wc = xw * (1-yw)
+            wd = xw * yw
 
             # linear interpretation of these predicted pixels
-            xw = weights_flows[b, :, 0]
-            yw = weights_flows[b, :, 1]
-            # img = tf.mul(pixel1, (1-xw)*(1-yw)) + tf.mul(pixel2, (1-xw)*yw) + \
-            #           tf.mul(pixel3, xw*(1-yw)) + tf.mul(pixel4, xw*yw)
-            img_1 = tf.mul(pixel5, (1-xw)*(1-yw)) + tf.mul(pixel6, (1-xw)*yw) + \
-                      tf.mul(pixel7, xw*(1-yw)) + tf.mul(pixel8, xw*yw)
+            img = tf.mul(Ia, tf.select(tf.logical_and(cond_a, cond_c), wa, zero_f)) + \
+                  tf.mul(Ib, tf.select(tf.logical_and(cond_a, cond_d), wb, zero_f)) + \
+                  tf.mul(Ic, tf.select(tf.logical_and(cond_b, cond_c), wc, zero_f)) + \
+                  tf.mul(Id, tf.select(tf.logical_and(cond_b, cond_d), wd, zero_f))
 
             # condition = 
             # img_1 = tf.select(condition, img_1, tf.zeros_like(img_1))
             # channel.append(img)
-            channel_1.append(img_1)
+            channel.append(img)
         # batch.append(tf.pack(channel, axis=1))
-        batch_1.append(tf.pack(channel_1, axis=1))
+        batch.append(tf.pack(channel, axis=1))
     # preds = tf.pack(batch)
-    reconstructs = tf.pack(batch_1)
+    reconstructs = tf.pack(batch)
     
     # L1 loss, also try SSIM loss
 

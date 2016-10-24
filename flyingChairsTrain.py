@@ -11,7 +11,7 @@ import math
 import utils as utils
 
 
-tf.app.flags.DEFINE_string('train_log_dir', '/tmp/no_scale_smooth/',
+tf.app.flags.DEFINE_string('train_log_dir', '/tmp/trial_1/',
                     'Directory where to write event logs.')
 
 tf.app.flags.DEFINE_integer('batch_size', 4, 'The number of images in each batch.')
@@ -131,7 +131,7 @@ class train:
         # print("Our FlowNet has %4.2fM number of parameters. " % (total_parameters/1000000.0))
 
         VGG16Init = False
-        bilinearInit = True
+        bilinearInit = False
 
         # Use pre-trained VGG16 model to initialize conv filters
         if VGG16Init:
@@ -156,7 +156,7 @@ class train:
             print("Restore from " +  ckpt.model_checkpoint_path)
             saver.restore(sess, ckpt.model_checkpoint_path)
         
-        display = 200        # number of iterations to display training log
+        display = 1        # number of iterations to display training log
         # Loss weights schedule
         weight_L = [16,8,4,2,1,0.5]
         for epoch in xrange(1, self.maxEpochs+1):
@@ -175,8 +175,60 @@ class train:
                 
                 if iteration % display == 0:
                 # if iteration == 1:
+                    
                     losses, flows_all, loss_sum = sess.run([loss, midFlows, total_loss], feed_dict={source_img: source, target_img: target, loss_weight: weight_L})
                     
+                    batch_num = 0
+                    img1 = source[batch_num,:,:,:]
+                    img2 = target[batch_num,:,:,:]
+                    print np.mean(img1), np.mean(img2)
+                    print np.max(img1), np.max(img2)
+                    print np.min(img1), np.min(img2)
+                    print np.mean(np.abs(img1)), np.mean(np.abs(img2))
+
+                    print np.mean(img1-img2)
+                    #print img1.shape
+                    print np.mean(np.power(np.square(img1-img2) + (0.001)**2, 0.25))
+
+                    img11 = losses[-2]
+                    img22 = losses[-1]
+                    print np.mean(img11), np.mean(img22)
+                    print np.max(img11), np.max(img22)
+                    print np.min(img11), np.min(img22)
+                    print np.mean(img11-img22)
+                    print img11.shape
+
+                    #img1 = np.reshape(img1, [-1,1])
+                    #print img1[:10]
+                    #img11 = np.reshape(losses[-2], [-1,1])
+                    #print img11[:10]
+
+                    print np.array_equal(img1, img11.astype(int))
+                    print np.array_equal(img2, img22.astype(int))
+                    
+                    #cv2.imwrite("img1" + ".jpeg", img1)
+                    #cv2.imwrite("img2" + ".jpeg", img2)
+                    #cv2.imwrite("loss1" + ".jpeg", img11)
+                    #cv2.imwrite("loss2" + ".jpeg", img22)
+
+                    # print flows_all[5].shape
+                    # print np.max(flows_all[5])
+                    # print np.min(flows_all[5])
+                    # print np.mean(np.abs(flows_all[5]))
+
+                    # np.save("/home/yzhu25/Documents/deepOF/flows_1.npy", flows_all[0])
+                    # np.save("/home/yzhu25/Documents/deepOF/flows_2.npy", flows_all[1])
+                    # np.save("/home/yzhu25/Documents/deepOF/flows_3.npy", flows_all[2])
+                    # np.save("/home/yzhu25/Documents/deepOF/flows_4.npy", flows_all[3])
+                    # np.save("/home/yzhu25/Documents/deepOF/flows_5.npy", flows_all[4])
+                    # np.save("/home/yzhu25/Documents/deepOF/flows_6.npy", flows_all[5])
+                    # np.save("/home/yzhu25/Documents/deepOF/source.pkl", source)
+                    # np.save("/home/yzhu25/Documents/deepOF/target.pkl", target)
+                    # np.save("/home/yzhu25/Documents/deepOF/flow_gt.pkl", flow)
+
+
+
+                    sys.exit()
                     print("---Train Batch(%d): Epoch %03d Iter %04d: Loss_sum %4.4f \r\n" % (self.batch_size, epoch, iteration, loss_sum))
                     # print("          PhotometricLoss1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["Charbonnier_predict"], weight_L[0], losses[0]["Charbonnier_predict"] * weight_L[0]))
                     # print("          PhotometricLoss2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["Charbonnier_predict"], weight_L[1], losses[1]["Charbonnier_predict"] * weight_L[1]))
@@ -209,8 +261,9 @@ class train:
                     # print("***Test flow max: pr1 %2.4f \r\n" % (np.max(np.absolute(flows_all[0]))))
                     # sys.exit()
                     assert not np.isnan(loss_sum).any(), 'Model diverged with loss = NaN'
+                    sys.exit()
                 # if iteration == int(math.floor(self.maxIterPerEpoch/2)) or iteration == self.maxIterPerEpoch:
-                if iteration % (display * 13) == 0:    # iteration == self.maxIterPerEpoch:    # 
+                if iteration % (display * 100) == 0:    # iteration == self.maxIterPerEpoch:    # 
                 # if True:
                     print("Start evaluating......")
                     self.evaluateNet(epoch, iteration, weight_L, sess)
