@@ -1,12 +1,13 @@
 import os, sys
 import argparse
-from flyingChairsTrain import train
+# from flyingChairsTrain import train
+from ucf101train import train
 # from train import train
 
 def deepOF(data_path):
 	MPISintel = False
-	ucf101 = False
-	flyingChairs = True
+	ucf101 = True
+	flyingChairs = False
 
 	if MPISintel:
 		image_size = [256, 512]
@@ -15,7 +16,7 @@ def deepOF(data_path):
 		passKey = 'final'		# clean or final
 		train(data_path, image_size, split, passKey)
 	elif ucf101:
-		image_size = [224, 224]
+		image_size = [320, 384]
 		train(data_path, image_size)
 	elif flyingChairs:
 		image_size = [320, 448]

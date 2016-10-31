@@ -11,14 +11,14 @@ import math
 import utils as utils
 
 
-tf.app.flags.DEFINE_string('train_log_dir', '/tmp/trial_1/',
+tf.app.flags.DEFINE_string('train_log_dir', '/tmp/border_smooth_v1/',
                     'Directory where to write event logs.')
 
 tf.app.flags.DEFINE_integer('batch_size', 4, 'The number of images in each batch.')
 
 tf.app.flags.DEFINE_integer('overwrite', True, 'Overwrite existing directory.')
 
-tf.app.flags.DEFINE_integer('save_interval_epoch', 30,
+tf.app.flags.DEFINE_integer('save_interval_epoch', 18,
                      'The frequency with which the model is saved, in epoch.')
 
 tf.app.flags.DEFINE_integer('max_number_of_steps', 10000000,
@@ -29,7 +29,7 @@ tf.app.flags.DEFINE_float('learning_rate', 0.000016, 'The learning rate')
 tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.5,
                    """Learning rate decay factor.""")
 
-tf.app.flags.DEFINE_float('num_epochs_per_decay', 30,
+tf.app.flags.DEFINE_float('num_epochs_per_decay', 18,
                    """Number of epochs after which learning rate decays.""")
 
 tf.app.flags.DEFINE_string('master', 'local',
@@ -46,7 +46,7 @@ class train:
         self.image_size = image_size
         self.origin_size = [384, 512]
         self.numLosses = 6
-        self.lambda_smooth = 0.5
+        self.lambda_smooth = 1
         self.flyingChairs = flyingChairsLoader(data_path, self.image_size)
         self.batch_size = FLAGS.batch_size
         self.maxEpochs = 110
@@ -117,21 +117,21 @@ class train:
         self.VGG_init_vars = [var for var in model_vars if (var.name).startswith('conv')]
         self.deconv_bilinearInit_vars = [var for var in model_vars if (var.name).startswith('up')]  
 
-        # # Calculating the number of params inside a network
-        # total_parameters = 0
-        # for varCount in model_vars:
-        #     # shape is an array of tf.Dimension
-        #     shape = varCount.get_shape()
-        #     # print(shape)
-        #     # print(len(shape))
-        #     variable_parametes = 1
-        #     for dim in shape:
-        #         variable_parametes *= dim.value
-        #     total_parameters += variable_parametes
-        # print("Our FlowNet has %4.2fM number of parameters. " % (total_parameters/1000000.0))
+        # Calculating the number of params inside a network
+        total_parameters = 0
+        for varCount in model_vars:
+            # shape is an array of tf.Dimension
+            shape = varCount.get_shape()
+            # print(shape)
+            # print(len(shape))
+            variable_parametes = 1
+            for dim in shape:
+                variable_parametes *= dim.value
+            total_parameters += variable_parametes
+        print("Our FlowNet has %4.2fM number of parameters. " % (total_parameters/1000000.0))
 
         VGG16Init = False
-        bilinearInit = False
+        bilinearInit = True
 
         # Use pre-trained VGG16 model to initialize conv filters
         if VGG16Init:
@@ -156,7 +156,7 @@ class train:
             print("Restore from " +  ckpt.model_checkpoint_path)
             saver.restore(sess, ckpt.model_checkpoint_path)
         
-        display = 1        # number of iterations to display training log
+        display = 500        # number of iterations to display training log
         # Loss weights schedule
         weight_L = [16,8,4,2,1,0.5]
         for epoch in xrange(1, self.maxEpochs+1):
@@ -174,68 +174,8 @@ class train:
                 train_op.run(feed_dict = {source_img: source, target_img: target, loss_weight: weight_L, learning_rate: lr}, session = sess)
                 
                 if iteration % display == 0:
-                # if iteration == 1:
-                    
                     losses, flows_all, loss_sum = sess.run([loss, midFlows, total_loss], feed_dict={source_img: source, target_img: target, loss_weight: weight_L})
-                    
-                    batch_num = 0
-                    img1 = source[batch_num,:,:,:]
-                    img2 = target[batch_num,:,:,:]
-                    print np.mean(img1), np.mean(img2)
-                    print np.max(img1), np.max(img2)
-                    print np.min(img1), np.min(img2)
-                    print np.mean(np.abs(img1)), np.mean(np.abs(img2))
-
-                    print np.mean(img1-img2)
-                    #print img1.shape
-                    print np.mean(np.power(np.square(img1-img2) + (0.001)**2, 0.25))
-
-                    img11 = losses[-2]
-                    img22 = losses[-1]
-                    print np.mean(img11), np.mean(img22)
-                    print np.max(img11), np.max(img22)
-                    print np.min(img11), np.min(img22)
-                    print np.mean(img11-img22)
-                    print img11.shape
-
-                    #img1 = np.reshape(img1, [-1,1])
-                    #print img1[:10]
-                    #img11 = np.reshape(losses[-2], [-1,1])
-                    #print img11[:10]
-
-                    print np.array_equal(img1, img11.astype(int))
-                    print np.array_equal(img2, img22.astype(int))
-                    
-                    #cv2.imwrite("img1" + ".jpeg", img1)
-                    #cv2.imwrite("img2" + ".jpeg", img2)
-                    #cv2.imwrite("loss1" + ".jpeg", img11)
-                    #cv2.imwrite("loss2" + ".jpeg", img22)
-
-                    # print flows_all[5].shape
-                    # print np.max(flows_all[5])
-                    # print np.min(flows_all[5])
-                    # print np.mean(np.abs(flows_all[5]))
-
-                    # np.save("/home/yzhu25/Documents/deepOF/flows_1.npy", flows_all[0])
-                    # np.save("/home/yzhu25/Documents/deepOF/flows_2.npy", flows_all[1])
-                    # np.save("/home/yzhu25/Documents/deepOF/flows_3.npy", flows_all[2])
-                    # np.save("/home/yzhu25/Documents/deepOF/flows_4.npy", flows_all[3])
-                    # np.save("/home/yzhu25/Documents/deepOF/flows_5.npy", flows_all[4])
-                    # np.save("/home/yzhu25/Documents/deepOF/flows_6.npy", flows_all[5])
-                    # np.save("/home/yzhu25/Documents/deepOF/source.pkl", source)
-                    # np.save("/home/yzhu25/Documents/deepOF/target.pkl", target)
-                    # np.save("/home/yzhu25/Documents/deepOF/flow_gt.pkl", flow)
-
-
-
-                    sys.exit()
                     print("---Train Batch(%d): Epoch %03d Iter %04d: Loss_sum %4.4f \r\n" % (self.batch_size, epoch, iteration, loss_sum))
-                    # print("          PhotometricLoss1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["Charbonnier_predict"], weight_L[0], losses[0]["Charbonnier_predict"] * weight_L[0]))
-                    # print("          PhotometricLoss2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["Charbonnier_predict"], weight_L[1], losses[1]["Charbonnier_predict"] * weight_L[1]))
-                    # print("          PhotometricLoss3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["Charbonnier_predict"], weight_L[2], losses[2]["Charbonnier_predict"] * weight_L[2]))
-                    # print("          PhotometricLoss4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["Charbonnier_predict"], weight_L[3], losses[3]["Charbonnier_predict"] * weight_L[3]))
-                    # print("          PhotometricLoss5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["Charbonnier_predict"], weight_L[4], losses[4]["Charbonnier_predict"] * weight_L[4]))
-                    # print("          PhotometricLoss6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["Charbonnier_predict"], weight_L[5], losses[5]["Charbonnier_predict"] * weight_L[5]))
                     print("          PhotometricLoss1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["Charbonnier_reconstruct"], weight_L[0], losses[0]["Charbonnier_reconstruct"] * weight_L[0]))
                     print("          PhotometricLoss2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["Charbonnier_reconstruct"], weight_L[1], losses[1]["Charbonnier_reconstruct"] * weight_L[1]))
                     print("          PhotometricLoss3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["Charbonnier_reconstruct"], weight_L[2], losses[2]["Charbonnier_reconstruct"] * weight_L[2]))
@@ -255,16 +195,8 @@ class train:
                     print("          SmoothnessLossV5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["V_loss"], weight_L[4]*self.lambda_smooth, losses[4]["V_loss"] * weight_L[4]*self.lambda_smooth))
                     print("          SmoothnessLossV6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["V_loss"], weight_L[5]*self.lambda_smooth, losses[5]["V_loss"] * weight_L[5]*self.lambda_smooth))
 
-                    # print("***Test flow abs_mean: pr1 %2.4f pr2 %2.4f pr3 %2.4f pr4 %2.4f pr5 %2.4f pr6 %2.4f" 
-                    #     % (np.mean(np.absolute(flows_all[0]), axis=None), np.mean(np.absolute(flows_all[1]), axis=None), np.mean(np.absolute(flows_all[2]), axis=None), 
-                    #         np.mean(np.absolute(flows_all[3]), axis=None), np.mean(np.absolute(flows_all[4]), axis=None), np.mean(np.absolute(flows_all[5]), axis=None)))
-                    # print("***Test flow max: pr1 %2.4f \r\n" % (np.max(np.absolute(flows_all[0]))))
-                    # sys.exit()
                     assert not np.isnan(loss_sum).any(), 'Model diverged with loss = NaN'
-                    sys.exit()
-                # if iteration == int(math.floor(self.maxIterPerEpoch/2)) or iteration == self.maxIterPerEpoch:
-                if iteration % (display * 100) == 0:    # iteration == self.maxIterPerEpoch:    # 
-                # if True:
+                if iteration % (display * 10) == 0:   
                     print("Start evaluating......")
                     self.evaluateNet(epoch, iteration, weight_L, sess)
                 
@@ -285,16 +217,14 @@ class train:
         # Don't know if this is safe to set all variables reuse=True
         # But because of different batch size, I don't know how to evaluate the model on validation data
         tf.get_variable_scope().reuse_variables()
-        # sess_evaluate = tf.Session()
 
         loss, midFlows, prev = flyingChairsWrapFlow.flowNet(source_img, target_img, loss_weight)
         maxTestIter = int(math.floor(len(self.flyingChairs.valList)/testBatchSize))
         Loss1, Loss2, Loss3, Loss4, Loss5, Loss6 = 0,0,0,0,0,0
         U_Loss1, U_Loss2, U_Loss3, U_Loss4, U_Loss5, U_Loss6 = 0,0,0,0,0,0
         V_Loss1, V_Loss2, V_Loss3, V_Loss4, V_Loss5, V_Loss6 = 0,0,0,0,0,0
-        flow_1, flow_2, flow_3, flow_4, flow_5, flow_6 = [],[],[],[],[],[]
+        flow_1 = []
         flow_gt = []
-        next_img = []
         previous_img = []
         # print weight_L
         for iteration in xrange(1, maxTestIter+1):
@@ -302,7 +232,6 @@ class train:
             source, target, flow = testBatch[0]
             imgPath = testBatch[1][0]
             losses, flows_all, prev_all = sess.run([loss, midFlows, prev], feed_dict={source_img: source, target_img: target, loss_weight: weight_L})
-            # assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
             Loss1 += losses[0]["total"]
             Loss2 += losses[1]["total"]
             Loss3 += losses[2]["total"]
@@ -322,42 +251,21 @@ class train:
             V_Loss5 += losses[4]["V_loss"]
             U_Loss6 += losses[5]["V_loss"]
 
-            flow1_list, flow2_list, flow3_list, flow4_list, flow5_list, flow6_list = [], [], [], [], [], []
-            # next_img_list = []
+            flow1_list = []
             previous_img_list = []
-            # print next.shape
             for batch_idx in xrange(testBatchSize):
-                flow1_list.append(np.expand_dims(cv2.resize(flows_all[0][batch_idx,:,:,:]*2, (self.origin_size[1], self.origin_size[0])), 0))
-                # flow2_list.append(np.expand_dims(flows_all[1][batch_idx,:,:,:], 0))
-                # flow3_list.append(np.expand_dims(flows_all[2][batch_idx,:,:,:], 0))
-                # flow4_list.append(np.expand_dims(flows_all[3][batch_idx,:,:,:], 0))
-                # flow5_list.append(np.expand_dims(flows_all[4][batch_idx,:,:,:], 0))
-                # flow6_list.append(np.expand_dims(flows_all[5][batch_idx,:,:,:], 0))
-                # next_img_list.append(np.expand_dims(cv2.resize(next_all[batch_idx,:,:,:], (self.origin_size[1], self.origin_size[0])), 0))
+                flowImg = flows_all[0][batch_idx,:,:,:]*2       # pr1 is still half of the final predicted flow value
+                flowImg = np.clip(flowImg, -300.0, 250.0)       # 300 and 250 is the min and max of the flow value in training dataset
+                flow1_list.append(np.expand_dims(cv2.resize(flowImg, (self.origin_size[1], self.origin_size[0])), 0))
                 previous_img_list.append(np.expand_dims(cv2.resize(prev_all[batch_idx,:,:,:], (self.origin_size[1], self.origin_size[0])), 0))
             flow_1.append(np.concatenate(flow1_list, axis=0))
-            # flow_2.append(np.concatenate(flow2_list, axis=0))
-            # flow_3.append(np.concatenate(flow3_list, axis=0))
-            # flow_4.append(np.concatenate(flow4_list, axis=0))
-            # flow_5.append(np.concatenate(flow5_list, axis=0))
-            # flow_6.append(np.concatenate(flow6_list, axis=0))
-            # next_img.append(np.concatenate(next_img_list, axis=0))
             previous_img.append(np.concatenate(previous_img_list, axis=0))
-
-
-            # flow_1.append(sess.run(tf.image.resize_bilinear(flows_all[0], self.origin_size)))
-            # flow_2.append(sess.run(tf.image.resize_bilinear(flows_all[1], self.origin_size)))
-            # flow_3.append(sess.run(tf.image.resize_bilinear(flows_all[2], self.origin_size)))
-            # flow_4.append(sess.run(tf.image.resize_bilinear(flows_all[3], self.origin_size)))
-            # flow_5.append(sess.run(tf.image.resize_bilinear(flows_all[4], self.origin_size)))
-            # flow_6.append(sess.run(tf.image.resize_bilinear(flows_all[5], self.origin_size)))
-
             flow_gt.append(flow)
 
             # Visualize
             # if False:
             if iteration % 10 == 0:
-                if epoch == 1:
+                if epoch == 1:      # save ground truth images and flow
                     gt_1 = source[0, :, :, :].squeeze()
                     cv2.imwrite(FLAGS.train_log_dir + self.flyingChairs.valList[imgPath] + "_img1.jpeg", gt_1)
                     gt_2 = target[0, :, :, :].squeeze()
@@ -369,43 +277,16 @@ class train:
                 # print flowColor.max(), flowColor.min(), flowColor.mean()
                 cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_1" + ".jpeg", flowColor_1)
 
-                # next_frame = next_img[iteration-1][0,:,:,:]
-                # intensity_range = np.max(next_frame, axis=None) - np.min(next_frame, axis=None)
-                # # save predicted next frames
-                # next_frame = (next_frame - np.min(next_frame, axis=None)) * 255 / intensity_range
-                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_next_1" + ".jpeg", next_frame.astype(int))
-
                 prev_frame = previous_img[iteration-1][0,:,:,:]
                 intensity_range = np.max(prev_frame, axis=None) - np.min(prev_frame, axis=None)
                 # save predicted next frames
                 prev_frame = (prev_frame - np.min(prev_frame, axis=None)) * 255 / intensity_range
                 cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_prev_1" + ".jpeg", prev_frame.astype(int))
 
-                # Visualize middle flows
-
-                # flowColor_2 = utils.flowToColor(flow_2[iteration-1][0,:,:,:].squeeze())
-                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_2" + ".jpeg", flowColor_2)
-                # flowColor_3 = utils.flowToColor(flow_3[iteration-1][0,:,:,:].squeeze())
-                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_3" + ".jpeg", flowColor_3)
-                # flowColor_4 = utils.flowToColor(flow_4[iteration-1][0,:,:,:].squeeze())
-                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_4" + ".jpeg", flowColor_4)
-                # flowColor_5 = utils.flowToColor(flow_5[iteration-1][0,:,:,:].squeeze())
-                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_5" + ".jpeg", flowColor_5)
-                # flowColor_6 = utils.flowToColor(flow_6[iteration-1][0,:,:,:].squeeze())
-                # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(trainIter) + "_flowColor_6" + ".jpeg", flowColor_6)
-
-
-            # print("Iteration %d/%d is Done" % (iteration, maxTestIter))
-
-        # print np.concatenate(flow_p, axis=0).shape, np.concatenate(flow_gt, axis=0).shape
         # Calculate endpoint error
         f1 = np.concatenate(flow_1, axis=0)
         f2 = np.concatenate(flow_gt, axis=0)
         AEE = utils.flow_ee(f1, f2)
-        # Calculate anguar error, maybe not necessary
-        # AAE = utils.flow_ae(f1, f2)
-        # print AEE, AAE
-        # AE_tot, AAE = utils.flow_ae(np.concatenate(flow_p, axis=0), np.concatenate(flow_gt, axis=0))
 
         # calculate statistics
         if epoch == 1:

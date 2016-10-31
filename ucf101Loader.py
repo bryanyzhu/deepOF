@@ -92,6 +92,7 @@ class ucf101Loader:
         assert batch_size > 0, 'we need a batch size larger than 0'
         # batchSampleIdxs = np.random.choice(len(self.valList), batch_size)
         batchSampleIdxs = np.random.choice(self.testLenClass[classID], batch_size)
+        # print batchSampleIdxs
         return self.hookValData(batchSampleIdxs, classID)
 
     def hookValData(self, sampleIdxs, classID):
