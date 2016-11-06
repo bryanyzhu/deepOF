@@ -13,11 +13,11 @@ import utils as utils
 tf.app.flags.DEFINE_string('train_log_dir', '/tmp/ucf101_3/',
                     'Directory where to write event logs.')
 
-tf.app.flags.DEFINE_integer('batch_size', 4, 'The number of images in each batch.')
+tf.app.flags.DEFINE_integer('batch_size', 8, 'The number of images in each batch.')
 
 tf.app.flags.DEFINE_integer('overwrite', True, 'Overwrite existing directory.')
 
-tf.app.flags.DEFINE_integer('save_interval_epoch', 10,
+tf.app.flags.DEFINE_integer('save_interval_epoch', 20,
                      'The frequency with which the model is saved, in epoch.')
 
 tf.app.flags.DEFINE_integer('max_number_of_steps', 10000000,
@@ -25,10 +25,10 @@ tf.app.flags.DEFINE_integer('max_number_of_steps', 10000000,
 
 tf.app.flags.DEFINE_float('learning_rate', 0.00016, 'The learning rate')
 
-tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.1,
+tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.5,
                    """Learning rate decay factor.""")
 
-tf.app.flags.DEFINE_float('num_epochs_per_decay', 27,
+tf.app.flags.DEFINE_float('num_epochs_per_decay', 50,
                    """Number of epochs after which learning rate decays.""")
 
 tf.app.flags.DEFINE_string('master', 'local',
@@ -45,6 +45,8 @@ class train:
         self.image_size = image_size
         self.ucf101 = ucf101Loader(data_path, image_size)
         self.batch_size = FLAGS.batch_size
+        self.numLosses = 5
+        self.lambda_smooth = 0.8
         self.maxEpochs = 1000
         # Read in standard split information
         trainSplit = os.path.join(data_path, "ucfTrainTestlist", "trainlist01.txt")
@@ -77,13 +79,13 @@ class train:
                 else:
                     # print self.VGG_init_vars[i-offNum].name
                     # print i, k, np.shape(weights[k])
-                    sess.run(self.VGG_init_vars[i-offNum].assign(weights[k]))
-                    # if i == 0:
-                    #     sess.run(self.VGG_init_vars[i-offNum].assign(np.repeat(weights[k],2,axis=2)))
-                    #     print i, k, np.shape(np.repeat(weights[k],2,axis=2))
-                    # else:
-                    #     sess.run(self.VGG_init_vars[i-offNum].assign(weights[k]))
-                    #     print i, k, np.shape(weights[k])
+                    # sess.run(self.VGG_init_vars[i-offNum].assign(weights[k]))
+                    if i == 0:
+                        sess.run(self.VGG_init_vars[i-offNum].assign(np.repeat(weights[k],2,axis=2)))
+                        print i, k, np.shape(np.repeat(weights[k],2,axis=2))
+                    else:
+                        sess.run(self.VGG_init_vars[i-offNum].assign(weights[k]))
+                        print i, k, np.shape(weights[k])
 
     def load_deconv_weights(self, var, sess):
         f_shape = sess.run(var).shape
@@ -110,8 +112,8 @@ class train:
         source_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
         target_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
         labels = tf.placeholder(tf.int32, [self.batch_size])
-        loss_weight = tf.placeholder(tf.float32, [6])
-        loss, midFlows, flow_pred = ucf101wrapFlow.STbaseline(source_img, target_img, loss_weight, labels)
+        loss_weight = tf.placeholder(tf.float32, [self.numLosses])
+        loss, midFlows, flow_pred = ucf101wrapFlow.STsingle(source_img, target_img, loss_weight, labels)
         print('Finished building Network.')
 
         init = tf.initialize_all_variables()
@@ -167,27 +169,123 @@ class train:
             saver.restore(sess, ckpt.model_checkpoint_path)
         
         display = 200        # number of iterations to display training log
-        weight_L = [16,8,4,2,1,1]
+        weight_L = [16,8,4,2,1]
         for epoch in xrange(1, self.maxEpochs+1):
             print("Epoch %d: \r\n" % epoch)
             print("Learning Rate %f: \r\n" % lr)
     
             for iteration in xrange(1, self.maxIterPerEpoch+1):
-                # source, target = self.sintel.sampleTrain(self.batch_size, iteration)      # last several images will be missing
                 source, target, actionClass = self.ucf101.sampleTrain(self.batch_size)
                 train_op.run(feed_dict = {source_img: source, target_img: target, loss_weight: weight_L, labels: actionClass, learning_rate: lr}, session = sess)
                 
                 if iteration % display == 0 and iteration != self.maxIterPerEpoch:
-                    losses, flows_all, action_preds, loss_all = sess.run([loss, midFlows, flow_pred, total_loss], feed_dict={source_img: source, target_img: target, loss_weight: weight_L, labels: actionClass})
+                    losses, flows_all, action_preds, loss_sum = sess.run([loss, midFlows, flow_pred, total_loss], feed_dict={source_img: source, target_img: target, loss_weight: weight_L, labels: actionClass})
                     accuracy = sum(np.equal(action_preds[-1], actionClass)) / float(self.batch_size)
-                    print("---Train Batch(%d): Epoch %03d Iter %04d: Loss1 %2.4f Loss2 %2.4f Loss3 %2.4f Loss4 %2.4f Loss5 %2.4f Loss6 %2.4f ActionLoss %2.4f Accuracy %4.4f \r\n" 
-                        % (self.batch_size, epoch, iteration, losses[0]["Charbonnier_reconstruct"], losses[1]["Charbonnier_reconstruct"], losses[2]["Charbonnier_reconstruct"], losses[3]["Charbonnier_reconstruct"], losses[4]["Charbonnier_reconstruct"], losses[5]["Charbonnier_reconstruct"], losses[6], accuracy))
-                    assert not np.isnan(losses[6]).any(), 'Model diverged with loss = NaN'
 
-                if iteration % display == 0: 
+                    print("---Train Batch(%d): Epoch %03d Iter %04d: Loss_sum %4.4f Accuracy: %4.4f \r\n" % (self.batch_size, epoch, iteration, loss_sum, accuracy))
+                    print("          PhotometricLoss1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["Charbonnier_reconstruct"], weight_L[0], losses[0]["Charbonnier_reconstruct"] * weight_L[0]))
+                    print("          PhotometricLoss2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["Charbonnier_reconstruct"], weight_L[1], losses[1]["Charbonnier_reconstruct"] * weight_L[1]))
+                    print("          PhotometricLoss3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["Charbonnier_reconstruct"], weight_L[2], losses[2]["Charbonnier_reconstruct"] * weight_L[2]))
+                    print("          PhotometricLoss4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["Charbonnier_reconstruct"], weight_L[3], losses[3]["Charbonnier_reconstruct"] * weight_L[3]))
+                    print("          PhotometricLoss5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["Charbonnier_reconstruct"], weight_L[4], losses[4]["Charbonnier_reconstruct"] * weight_L[4]))
+                    
+                    print("          SmoothnessLossU1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["U_loss"], weight_L[0]*self.lambda_smooth, losses[0]["U_loss"] * weight_L[0]*self.lambda_smooth))
+                    print("          SmoothnessLossU2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["U_loss"], weight_L[1]*self.lambda_smooth, losses[1]["U_loss"] * weight_L[1]*self.lambda_smooth))
+                    print("          SmoothnessLossU3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["U_loss"], weight_L[2]*self.lambda_smooth, losses[2]["U_loss"] * weight_L[2]*self.lambda_smooth))
+                    print("          SmoothnessLossU4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["U_loss"], weight_L[3]*self.lambda_smooth, losses[3]["U_loss"] * weight_L[3]*self.lambda_smooth))
+                    print("          SmoothnessLossU5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["U_loss"], weight_L[4]*self.lambda_smooth, losses[4]["U_loss"] * weight_L[4]*self.lambda_smooth))
+                    
+                    print("          SmoothnessLossV1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["V_loss"], weight_L[0]*self.lambda_smooth, losses[0]["V_loss"] * weight_L[0]*self.lambda_smooth))
+                    print("          SmoothnessLossV2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["V_loss"], weight_L[1]*self.lambda_smooth, losses[1]["V_loss"] * weight_L[1]*self.lambda_smooth))
+                    print("          SmoothnessLossV3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["V_loss"], weight_L[2]*self.lambda_smooth, losses[2]["V_loss"] * weight_L[2]*self.lambda_smooth))
+                    print("          SmoothnessLossV4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["V_loss"], weight_L[3]*self.lambda_smooth, losses[3]["V_loss"] * weight_L[3]*self.lambda_smooth))
+                    print("          SmoothnessLossV5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["V_loss"], weight_L[4]*self.lambda_smooth, losses[4]["V_loss"] * weight_L[4]*self.lambda_smooth))
+                    
+                    print("          ActionPredicLoss = %4.4f (* %2.4f = %2.4f loss)" % (losses[5], weight_L[0], losses[5] * weight_L[0]))
+                    assert not np.isnan(loss_sum).any(), 'Model diverged with loss = NaN'
+
+                if iteration % (display * 1) == 0: 
                     print("Start evaluating......")
-                    self.evaluateNet(epoch, iteration, weight_L, sess)
+                    testBatchSize = self.batch_size
+                    maxTestIter = 101
+                    Loss1 = 0
+                    Loss2 = 0
+                    Loss3 = 0
+                    Loss4 = 0
+                    Loss5 = 0
+                    Loss7 = 0
+                    U_Loss1, U_Loss2, U_Loss3, U_Loss4, U_Loss5 = 0,0,0,0,0
+                    V_Loss1, V_Loss2, V_Loss3, V_Loss4, V_Loss5 = 0,0,0,0,0
+                    flow_p = []
+                    label_pred = []
+                    label_gt = []
+                    for testIter in xrange(maxTestIter):
+                        source, target, actionClass = self.ucf101.sampleVal(testBatchSize, testIter)
+                        losses, flows_all, action_preds = sess.run([loss, midFlows, flow_pred], feed_dict={source_img: source, target_img: target, loss_weight: weight_L, labels: actionClass})
+                        # print flows_all[-1]
+                        # assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
+                        Loss1 += losses[0]["total"]
+                        Loss2 += losses[1]["total"]
+                        Loss3 += losses[2]["total"]
+                        Loss4 += losses[3]["total"]
+                        Loss5 += losses[4]["total"]
+
+                        Loss7 += losses[5]
+
+                        U_Loss1 += losses[0]["U_loss"]
+                        U_Loss2 += losses[1]["U_loss"]
+                        U_Loss3 += losses[2]["U_loss"]
+                        U_Loss4 += losses[3]["U_loss"]
+                        U_Loss5 += losses[4]["U_loss"]
+                        
+                        V_Loss1 += losses[0]["V_loss"]
+                        V_Loss2 += losses[1]["V_loss"]
+                        V_Loss3 += losses[2]["V_loss"]
+                        V_Loss4 += losses[3]["V_loss"]
+                        V_Loss5 += losses[4]["V_loss"]
+                        
+                        label_pred.extend(action_preds[-1])
+                        label_gt.extend(actionClass)
+                        # print action_preds[-1]
+                        # print actionClass
+                        flow_p.append(flows_all[0])
+
+                        # Visualize
+                        # if iteration % 1 == 0:
+                        flow_vis = flow_p[testIter-1][0,:,:,:].squeeze()
+                        flowColor_1 = utils.flowToColor(flow_vis)
+                        cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_" + str(testIter) + "_flowColor" + ".jpeg", flowColor_1)
+
+
+                        # flowx = flow_vis[:, :, 0]
+                        # print flowx.min(), flowx.max()
+                        # flowx = (flowx-flowx.min())/(flowx.max()-flowx.min())
+                        # flowx = np.uint8(flowx*255.0)
+                        # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(testIter) + "_x" + ".jpeg", flowx)
+                        # flowy = flow_vis[:, :, 1]
+                        # print flowy.min(), flowy.max()
+                        # flowy = (flowy-flowy.min())/(flowy.max()-flowy.min())
+                        # flowy = np.uint8(flowy*255.0)
+                        # cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(testIter) + "_y" + ".jpeg", flowy)
+
+                        # print("Iteration %d/%d is Done" % (testIter, maxTestIter))
                 
+                    accuracy = sum(np.equal(label_pred, label_gt)) / (testBatchSize * 101)
+                
+                    print("***Test flow abs_mean: pr1 %2.4f pr2 %2.4f pr3 %2.4f pr4 %2.4f pr5 %2.4f" 
+                        % (np.mean(np.absolute(flows_all[0]), axis=None), np.mean(np.absolute(flows_all[1]), axis=None), np.mean(np.absolute(flows_all[2]), axis=None), 
+                            np.mean(np.absolute(flows_all[3]), axis=None), np.mean(np.absolute(flows_all[4]), axis=None)))
+
+                    print("***Test flow max: pr1 %2.4f pr2 %2.4f pr3 %2.4f pr4 %2.4f pr5 %2.4f" 
+                        % (np.max(np.absolute(flows_all[0]), axis=None), np.max(np.absolute(flows_all[1]), axis=None), np.max(np.absolute(flows_all[2]), axis=None), 
+                            np.max(np.absolute(flows_all[3]), axis=None), np.max(np.absolute(flows_all[4]), axis=None)))
+
+                    Loss_sum = (Loss1*weight_L[0] + Loss2*weight_L[1] + Loss3*weight_L[2] + Loss4*weight_L[3] + Loss5*weight_L[4])/maxTestIter
+                    ULoss_sum = (U_Loss1*weight_L[0] + U_Loss2*weight_L[1] + U_Loss3*weight_L[2] + U_Loss4*weight_L[3] + U_Loss5*weight_L[4])/maxTestIter*self.lambda_smooth
+                    VLoss_sum = (V_Loss1*weight_L[0] + V_Loss2*weight_L[1] + V_Loss3*weight_L[2] + V_Loss4*weight_L[3] + V_Loss5*weight_L[4])/maxTestIter*self.lambda_smooth
+                    print("***Test: Epoch %03d Iter %04d: Loss_sum %4.4f ULoss_sum %4.4f VLoss_sum %4.4f Accurcy %4.4f \r\n" 
+                        % (epoch, iteration, Loss_sum, ULoss_sum, VLoss_sum, accuracy))
+                            
 
             if epoch % FLAGS.num_epochs_per_decay == 0:
                 lr *= FLAGS.learning_rate_decay_factor
@@ -196,67 +294,6 @@ class train:
                 print("Save to " +  FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
                 saver.save(sess, FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
 
-    def evaluateNet(self, epoch, trainIter, weight_L, sess):
-        # For Sintel, the batch size should be 7, so that all validation images are covered.
-        testBatchSize = 5
-        source_img = tf.placeholder(tf.float32, [testBatchSize, self.image_size[0], self.image_size[1], 3])
-        target_img = tf.placeholder(tf.float32, [testBatchSize, self.image_size[0], self.image_size[1], 3])
-        labels = tf.placeholder(tf.int32, [testBatchSize])
-        loss_weight = tf.placeholder(tf.float32, [6])
-        # Don't know if this is safe to set all variables reuse=True
-        # But because of different batch size, I don't know how to evaluate the model on validation data
-        tf.get_variable_scope().reuse_variables()
-
-        loss, midFlows, predictions = ucf101wrapFlow.STbaseline(source_img, target_img, loss_weight, labels)
-        # maxTestIter = int(math.floor(len(self.sintel.valList)/testBatchSize))
-        maxTestIter = 101
-        Loss1 = 0
-        Loss2 = 0
-        Loss3 = 0
-        Loss4 = 0
-        Loss5 = 0
-        Loss6 = 0
-        Loss7 = 0
-        flow_p = []
-        label_pred = []
-        label_gt = []
-        # print weight_L
-        for iteration in xrange(maxTestIter):
-            source, target, actionClass = self.ucf101.sampleVal(testBatchSize, iteration)
-            losses, flows_all, action_preds = sess.run([loss, midFlows, predictions], feed_dict={source_img: source, target_img: target, loss_weight: weight_L, labels: actionClass})
-            # print flows_all[-1]
-            # assert not np.isnan(loss_values), 'Model diverged with loss = NaN'
-            Loss1 += losses[0]["total"]
-            Loss2 += losses[1]["total"]
-            Loss3 += losses[2]["total"]
-            Loss4 += losses[3]["total"]
-            Loss5 += losses[4]["total"]
-            Loss6 += losses[5]["total"]
-            Loss7 += losses[6]
-            label_pred.extend(action_preds)
-            label_gt.extend(actionClass)
-            flow_p.append(flows_all[0])
-
-            # Visualize
-            # if iteration % 1 == 0:
-            flow_vis = flow_p[iteration-1][0,:,:,:].squeeze()
-            flowx = flow_vis[:, :, 0]
-            print flowx.min(), flowx.max()
-            flowx = (flowx-flowx.min())/(flowx.max()-flowx.min())
-            flowx = np.uint8(flowx*255.0)
-            cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_x" + ".jpeg", flowx)
-            flowy = flow_vis[:, :, 1]
-            print flowy.min(), flowy.max()
-            flowy = (flowy-flowy.min())/(flowy.max()-flowy.min())
-            flowy = np.uint8(flowy*255.0)
-            cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(iteration) + "_y" + ".jpeg", flowy)
-
-            print("Iteration %d/%d is Done" % (iteration, maxTestIter))
     
-        accuracy = sum(np.equal(label_pred, label_gt)) / (testBatchSize * 101)
-        # print("***Test: Epoch %03d Iter %04d: Accuracy %4.4f \r\n" 
-        #     % (epoch, trainIter, accuracy))
-        print("***Test: Epoch %03d Iter %04d: Loss1 %2.4f Loss2 %2.4f Loss3 %2.4f Loss4 %2.4f Loss5 %2.4f Loss6 %2.4f Loss7 %4.4f Accuracy %4.4f \r\n" 
-            % (epoch, trainIter, Loss1/maxTestIter, Loss2/maxTestIter, Loss3/maxTestIter, Loss4/maxTestIter, Loss5/maxTestIter, Loss6/maxTestIter, Loss7/maxTestIter, accuracy))
 
         

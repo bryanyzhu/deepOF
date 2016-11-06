@@ -11,7 +11,7 @@ import math
 import utils as utils
 
 
-tf.app.flags.DEFINE_string('train_log_dir', '/tmp/border_smooth_v1/',
+tf.app.flags.DEFINE_string('train_log_dir', '/tmp/inception_v3_v2/',
                     'Directory where to write event logs.')
 
 tf.app.flags.DEFINE_integer('batch_size', 4, 'The number of images in each batch.')
@@ -96,116 +96,121 @@ class train:
         if not os.path.isdir(FLAGS.train_log_dir):
             os.makedirs(FLAGS.train_log_dir, mode=0777)
 
-        # with tf.device('/gpu:1'):
-        source_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
-        target_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
-        loss_weight = tf.placeholder(tf.float32, [self.numLosses])
-        loss, midFlows, previous = flyingChairsWrapFlow.flowNet(source_img, target_img, loss_weight)
-        print('Finished building Network.')
+        with tf.device('/gpu:0'):
+            source_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
+            target_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3])
+            loss_weight = tf.placeholder(tf.float32, [self.numLosses])
+            loss, midFlows, previous = flyingChairsWrapFlow.inception_v3(source_img, target_img, loss_weight)
+            print('Finished building Network.')
 
-        init = tf.initialize_all_variables()
-        total_loss = slim.losses.get_total_loss(add_regularization_losses=False)
-        lr = FLAGS.learning_rate
-        learning_rate = tf.placeholder(tf.float32, shape=[])
-        train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(total_loss)
+            # Calculating the number of params inside a network
+            model_vars = tf.trainable_variables()
+            total_parameters = 0
+            for varCount in model_vars:
+                # shape is an array of tf.Dimension
+                shape = varCount.get_shape()
+                # print(shape)
+                # print(len(shape))
+                variable_parametes = 1
+                for dim in shape:
+                    variable_parametes *= dim.value
+                total_parameters += variable_parametes
+            print("Our FlowNet has %4.2fM number of parameters. " % (total_parameters/1000000.0))
 
-        # sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
-        sess = tf.Session()
-        sess.run(tf.initialize_all_variables())
-        # What about pre-traind initialized model params and deconv parms? 
-        model_vars = tf.trainable_variables()
-        self.VGG_init_vars = [var for var in model_vars if (var.name).startswith('conv')]
-        self.deconv_bilinearInit_vars = [var for var in model_vars if (var.name).startswith('up')]  
+            init = tf.initialize_all_variables()
+            total_loss = slim.losses.get_total_loss(add_regularization_losses=False)
+            lr = FLAGS.learning_rate
+            learning_rate = tf.placeholder(tf.float32, shape=[])
+            train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(total_loss)
 
-        # Calculating the number of params inside a network
-        total_parameters = 0
-        for varCount in model_vars:
-            # shape is an array of tf.Dimension
-            shape = varCount.get_shape()
-            # print(shape)
-            # print(len(shape))
-            variable_parametes = 1
-            for dim in shape:
-                variable_parametes *= dim.value
-            total_parameters += variable_parametes
-        print("Our FlowNet has %4.2fM number of parameters. " % (total_parameters/1000000.0))
+            
+            config = tf.ConfigProto()
+            config.gpu_options.allow_growth = True
+            config.allow_soft_placement = True
+            sess = tf.Session(config=config)
+            sess.run(tf.initialize_all_variables())
 
-        VGG16Init = False
-        bilinearInit = True
+            # What about pre-traind initialized model params and deconv parms? 
+            self.VGG_init_vars = [var for var in model_vars if (var.name).startswith('conv')]
+            self.deconv_bilinearInit_vars = [var for var in model_vars if (var.name).startswith('up')]  
 
-        # Use pre-trained VGG16 model to initialize conv filters
-        if VGG16Init:
-            VGG16modelPath = "vgg16_weights.npz"
-            if not os.path.exists(VGG16modelPath):
-                modelUrl = "http://www.cs.toronto.edu/~frossard/vgg16/vgg16_weights.npz"
-                self.downloadModel(modelUrl)
-            self.load_VGG16_weights(VGG16modelPath, sess)
-            print("-----Done initializing conv filters with VGG16 pre-trained model------")
+            VGG16Init = False
+            bilinearInit = True
 
-        # Use bilinear upsampling to initialize deconv filters
-        if bilinearInit:
-            for var in self.deconv_bilinearInit_vars:
-                if "weights" in var.name:
-                    self.load_deconv_weights(var, sess)
-            print("-----Done initializing deconv filters with bilinear upsampling------")
-    
-        saver = tf.train.Saver()
-        ckpt = tf.train.get_checkpoint_state(FLAGS.train_log_dir)
+            # Use pre-trained VGG16 model to initialize conv filters
+            if VGG16Init:
+                VGG16modelPath = "vgg16_weights.npz"
+                if not os.path.exists(VGG16modelPath):
+                    modelUrl = "http://www.cs.toronto.edu/~frossard/vgg16/vgg16_weights.npz"
+                    self.downloadModel(modelUrl)
+                self.load_VGG16_weights(VGG16modelPath, sess)
+                print("-----Done initializing conv filters with VGG16 pre-trained model------")
 
-        if ckpt and ckpt.model_checkpoint_path:
-            print("Restore from " +  ckpt.model_checkpoint_path)
-            saver.restore(sess, ckpt.model_checkpoint_path)
+            # Use bilinear upsampling to initialize deconv filters
+            if bilinearInit:
+                for var in self.deconv_bilinearInit_vars:
+                    if "weights" in var.name:
+                        self.load_deconv_weights(var, sess)
+                print("-----Done initializing deconv filters with bilinear upsampling------")
         
-        display = 500        # number of iterations to display training log
-        # Loss weights schedule
-        weight_L = [16,8,4,2,1,0.5]
-        for epoch in xrange(1, self.maxEpochs+1):
-            print("Epoch %d: \r\n" % epoch)
-            print("Learning Rate %f: \r\n" % lr)
-           
-            # 5558 max iterations
-            # print self.maxIterPerEpoch
-            for iteration in xrange(1, self.maxIterPerEpoch+1):
-                source, target, flow = self.flyingChairs.sampleTrain(self.batch_size, iteration)  
+            saver = tf.train.Saver()
+            ckpt = tf.train.get_checkpoint_state(FLAGS.train_log_dir)
 
-                # source_geo, target_geo = self.geoAugmentation(source, target, sess)
-                ##################################################################
-                # Training
-                train_op.run(feed_dict = {source_img: source, target_img: target, loss_weight: weight_L, learning_rate: lr}, session = sess)
+            if ckpt and ckpt.model_checkpoint_path:
+                print("Restore from " +  ckpt.model_checkpoint_path)
+                saver.restore(sess, ckpt.model_checkpoint_path)
+            
+            display = 500        # number of iterations to display training log
+            # Loss weights schedule
+            weight_L = [16,8,4,2,1,1]
+            for epoch in xrange(1, self.maxEpochs+1):
+                print("Epoch %d: \r\n" % epoch)
+                print("Learning Rate %f: \r\n" % lr)
+               
+                # 5558 max iterations
+                # print self.maxIterPerEpoch
+                for iteration in xrange(1, self.maxIterPerEpoch+1):
+                    source, target, flow = self.flyingChairs.sampleTrain(self.batch_size, iteration)  
+
+                    # source_geo, target_geo = self.geoAugmentation(source, target, sess)
+                    ##################################################################
+                    # Training
+                    train_op.run(feed_dict = {source_img: source, target_img: target, loss_weight: weight_L, learning_rate: lr}, session = sess)
+                    
+                    if iteration % display == 0:
+                        losses, flows_all, loss_sum = sess.run([loss, midFlows, total_loss], feed_dict={source_img: source, target_img: target, loss_weight: weight_L})
                 
-                if iteration % display == 0:
-                    losses, flows_all, loss_sum = sess.run([loss, midFlows, total_loss], feed_dict={source_img: source, target_img: target, loss_weight: weight_L})
-                    print("---Train Batch(%d): Epoch %03d Iter %04d: Loss_sum %4.4f \r\n" % (self.batch_size, epoch, iteration, loss_sum))
-                    print("          PhotometricLoss1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["Charbonnier_reconstruct"], weight_L[0], losses[0]["Charbonnier_reconstruct"] * weight_L[0]))
-                    print("          PhotometricLoss2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["Charbonnier_reconstruct"], weight_L[1], losses[1]["Charbonnier_reconstruct"] * weight_L[1]))
-                    print("          PhotometricLoss3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["Charbonnier_reconstruct"], weight_L[2], losses[2]["Charbonnier_reconstruct"] * weight_L[2]))
-                    print("          PhotometricLoss4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["Charbonnier_reconstruct"], weight_L[3], losses[3]["Charbonnier_reconstruct"] * weight_L[3]))
-                    print("          PhotometricLoss5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["Charbonnier_reconstruct"], weight_L[4], losses[4]["Charbonnier_reconstruct"] * weight_L[4]))
-                    print("          PhotometricLoss6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["Charbonnier_reconstruct"], weight_L[5], losses[5]["Charbonnier_reconstruct"] * weight_L[5]))
-                    print("          SmoothnessLossU1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["U_loss"], weight_L[0]*self.lambda_smooth, losses[0]["U_loss"] * weight_L[0]*self.lambda_smooth))
-                    print("          SmoothnessLossU2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["U_loss"], weight_L[1]*self.lambda_smooth, losses[1]["U_loss"] * weight_L[1]*self.lambda_smooth))
-                    print("          SmoothnessLossU3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["U_loss"], weight_L[2]*self.lambda_smooth, losses[2]["U_loss"] * weight_L[2]*self.lambda_smooth))
-                    print("          SmoothnessLossU4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["U_loss"], weight_L[3]*self.lambda_smooth, losses[3]["U_loss"] * weight_L[3]*self.lambda_smooth))
-                    print("          SmoothnessLossU5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["U_loss"], weight_L[4]*self.lambda_smooth, losses[4]["U_loss"] * weight_L[4]*self.lambda_smooth))
-                    print("          SmoothnessLossU6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["U_loss"], weight_L[5]*self.lambda_smooth, losses[5]["U_loss"] * weight_L[5]*self.lambda_smooth))
-                    print("          SmoothnessLossV1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["V_loss"], weight_L[0]*self.lambda_smooth, losses[0]["V_loss"] * weight_L[0]*self.lambda_smooth))
-                    print("          SmoothnessLossV2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["V_loss"], weight_L[1]*self.lambda_smooth, losses[1]["V_loss"] * weight_L[1]*self.lambda_smooth))
-                    print("          SmoothnessLossV3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["V_loss"], weight_L[2]*self.lambda_smooth, losses[2]["V_loss"] * weight_L[2]*self.lambda_smooth))
-                    print("          SmoothnessLossV4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["V_loss"], weight_L[3]*self.lambda_smooth, losses[3]["V_loss"] * weight_L[3]*self.lambda_smooth))
-                    print("          SmoothnessLossV5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["V_loss"], weight_L[4]*self.lambda_smooth, losses[4]["V_loss"] * weight_L[4]*self.lambda_smooth))
-                    print("          SmoothnessLossV6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["V_loss"], weight_L[5]*self.lambda_smooth, losses[5]["V_loss"] * weight_L[5]*self.lambda_smooth))
+                        print("---Train Batch(%d): Epoch %03d Iter %04d: Loss_sum %4.4f \r\n" % (self.batch_size, epoch, iteration, loss_sum))
+                        print("          PhotometricLoss1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["Charbonnier_reconstruct"], weight_L[0], losses[0]["Charbonnier_reconstruct"] * weight_L[0]))
+                        print("          PhotometricLoss2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["Charbonnier_reconstruct"], weight_L[1], losses[1]["Charbonnier_reconstruct"] * weight_L[1]))
+                        print("          PhotometricLoss3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["Charbonnier_reconstruct"], weight_L[2], losses[2]["Charbonnier_reconstruct"] * weight_L[2]))
+                        print("          PhotometricLoss4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["Charbonnier_reconstruct"], weight_L[3], losses[3]["Charbonnier_reconstruct"] * weight_L[3]))
+                        print("          PhotometricLoss5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["Charbonnier_reconstruct"], weight_L[4], losses[4]["Charbonnier_reconstruct"] * weight_L[4]))
+                        print("          PhotometricLoss6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["Charbonnier_reconstruct"], weight_L[5], losses[5]["Charbonnier_reconstruct"] * weight_L[5]))
+                        print("          SmoothnessLossU1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["U_loss"], weight_L[0]*self.lambda_smooth, losses[0]["U_loss"] * weight_L[0]*self.lambda_smooth))
+                        print("          SmoothnessLossU2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["U_loss"], weight_L[1]*self.lambda_smooth, losses[1]["U_loss"] * weight_L[1]*self.lambda_smooth))
+                        print("          SmoothnessLossU3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["U_loss"], weight_L[2]*self.lambda_smooth, losses[2]["U_loss"] * weight_L[2]*self.lambda_smooth))
+                        print("          SmoothnessLossU4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["U_loss"], weight_L[3]*self.lambda_smooth, losses[3]["U_loss"] * weight_L[3]*self.lambda_smooth))
+                        print("          SmoothnessLossU5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["U_loss"], weight_L[4]*self.lambda_smooth, losses[4]["U_loss"] * weight_L[4]*self.lambda_smooth))
+                        print("          SmoothnessLossU6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["U_loss"], weight_L[5]*self.lambda_smooth, losses[5]["U_loss"] * weight_L[5]*self.lambda_smooth))
+                        print("          SmoothnessLossV1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["V_loss"], weight_L[0]*self.lambda_smooth, losses[0]["V_loss"] * weight_L[0]*self.lambda_smooth))
+                        print("          SmoothnessLossV2 = %4.4f (* %2.4f = %2.4f loss)" % (losses[1]["V_loss"], weight_L[1]*self.lambda_smooth, losses[1]["V_loss"] * weight_L[1]*self.lambda_smooth))
+                        print("          SmoothnessLossV3 = %4.4f (* %2.4f = %2.4f loss)" % (losses[2]["V_loss"], weight_L[2]*self.lambda_smooth, losses[2]["V_loss"] * weight_L[2]*self.lambda_smooth))
+                        print("          SmoothnessLossV4 = %4.4f (* %2.4f = %2.4f loss)" % (losses[3]["V_loss"], weight_L[3]*self.lambda_smooth, losses[3]["V_loss"] * weight_L[3]*self.lambda_smooth))
+                        print("          SmoothnessLossV5 = %4.4f (* %2.4f = %2.4f loss)" % (losses[4]["V_loss"], weight_L[4]*self.lambda_smooth, losses[4]["V_loss"] * weight_L[4]*self.lambda_smooth))
+                        print("          SmoothnessLossV6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["V_loss"], weight_L[5]*self.lambda_smooth, losses[5]["V_loss"] * weight_L[5]*self.lambda_smooth))
 
-                    assert not np.isnan(loss_sum).any(), 'Model diverged with loss = NaN'
-                if iteration % (display * 10) == 0:   
-                    print("Start evaluating......")
-                    self.evaluateNet(epoch, iteration, weight_L, sess)
-                
-            if epoch % FLAGS.num_epochs_per_decay == 0:
-                lr *= FLAGS.learning_rate_decay_factor
+                        assert not np.isnan(loss_sum).any(), 'Model diverged with loss = NaN'
+                    if iteration % (display * 10) == 0:   
+                        print("Start evaluating......")
+                        self.evaluateNet(epoch, iteration, weight_L, sess)
+                    
+                if epoch % FLAGS.num_epochs_per_decay == 0:
+                    lr *= FLAGS.learning_rate_decay_factor
 
-            if epoch % FLAGS.save_interval_epoch == 0:
-                print("Save to " +  FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
-                saver.save(sess, FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
+                if epoch % FLAGS.save_interval_epoch == 0:
+                    print("Save to " +  FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
+                    saver.save(sess, FLAGS.train_log_dir + str(epoch) + '_model.ckpt')
 
 
     def evaluateNet(self, epoch, trainIter, weight_L, sess):
@@ -218,7 +223,9 @@ class train:
         # But because of different batch size, I don't know how to evaluate the model on validation data
         tf.get_variable_scope().reuse_variables()
 
-        loss, midFlows, prev = flyingChairsWrapFlow.flowNet(source_img, target_img, loss_weight)
+        # loss, midFlows, prev = flyingChairsWrapFlow.VGG16(source_img, target_img, loss_weight)
+        loss, midFlows, prev = flyingChairsWrapFlow.inception_v3(source_img, target_img, loss_weight, is_training=False)
+        
         maxTestIter = int(math.floor(len(self.flyingChairs.valList)/testBatchSize))
         Loss1, Loss2, Loss3, Loss4, Loss5, Loss6 = 0,0,0,0,0,0
         U_Loss1, U_Loss2, U_Loss3, U_Loss4, U_Loss5, U_Loss6 = 0,0,0,0,0,0

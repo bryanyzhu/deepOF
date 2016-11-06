@@ -2,7 +2,7 @@ import os,sys
 import numpy as np
 import matplotlib.pyplot as pp
 
-log_file = "/home/yzhu25/flownet_smooth_trial2.txt"
+log_file = "/home/yzhu25/Documents/deepOF/add_image_gradients.txt"
 # log_file = "/home/yzhu25/Documents/deepOF/no_scale_no_smooth.txt"
 f_log = open(log_file, "r")
 log_lines = f_log.readlines()
@@ -14,7 +14,8 @@ for line_num in xrange(len(log_lines)):
 	if "***Test: E" in line:
 		line_info = line.split()
 		# print line_info
-		test_loss = line_info[6]
+		test_loss = line_info[12]
+		print test_loss
 		test_loss_all.append(test_loss)
 		# print test_loss
 
