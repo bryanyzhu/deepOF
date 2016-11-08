@@ -79,6 +79,133 @@ def flow_ae(f1, f2, mask=None):
 	# return ae_tot, aae
 	return aae
 
+def geoAugmentation(source, target):
+    """
+    Includes random flip, translation, scale, rotation
+    """
+    img0List = []
+    img1List = []
+    height = source.shape[1]
+    width = source.shape[2]
+
+    for batch_idx in xrange(self.batch_size):
+        img0 = source[batch_idx,:,:,:]
+        img1 = target[batch_idx,:,:,:]
+
+        # random flip
+        flip_prob = np.random.uniform(low=0.0, high=1.0, size=1)
+        if flip_prob >= 0.5:
+            img0List.append(np.expand_dims(np.fliplr(img0), 0))
+            img1List.append(np.expand_dims(np.fliplr(img1), 0))
+            # print np.fliplr(img0).shape
+        else:
+            img0List.append(np.expand_dims(img0, 0))
+            img1List.append(np.expand_dims(img1, 0))
+            # print img0.shape
+
+        # translation
+        translate_x = np.random.uniform(low=-0.2, high=0.2, size=1)
+        translate_y = np.random.uniform(low=-0.2, high=0.2, size=1)
+        x_move = int(translate_x * width)
+        y_move = int(translate_y * height)
+
+        translation_matrix = np.float32([ [1,0,x_move], [0,1,y_move] ])
+        img0_translation = cv2.warpAffine(img0, translation_matrix, (width, height))
+        img1_translation = cv2.warpAffine(img1, translation_matrix, (width, height))
+
+        img0List.append(np.expand_dims(img0_translation, 0))
+        img1List.append(np.expand_dims(img1_translation, 0))
+        # print img0_translation.shape
+        # print img1_translation.shape
+
+        # scale
+        scale_ratio = np.random.uniform(low=0.9, high=2.0, size=1)
+        scaled_width = int(width * scale_ratio)
+        scaled_height = int(height * scale_ratio)
+        img0_scale = 0
+        img1_scale = 0
+
+        left_move, right_move, up_move, down_move = 0, 0, 0, 0
+        if scale_ratio > 1.0:
+            img0_scale = cv2.resize(img0, (scaled_width, scaled_height))
+            img1_scale = cv2.resize(img1, (scaled_width, scaled_height))
+            if (scaled_width - width) % 2 == 0:
+                left_move = (scaled_width - width) / 2 
+                right_move = left_move
+            else:
+                left_move = (scaled_width - width - 1) / 2 
+                right_move = left_move + 1
+            if (scaled_height - height) % 2 == 0:
+                up_move = (scaled_height - height) / 2 
+                down_move = up_move
+            else:
+                up_move = (scaled_height - height - 1) / 2 
+                down_move = up_move + 1
+
+            # print up_move, down_move, left_move, right_move
+            cond1 = (up_move == 0 and down_move == 0)
+            cond2 = (left_move == 0 and right_move == 0)
+            if  cond1 and cond2:
+                img0_scale = img0_scale[:, :, :]
+                img1_scale = img1_scale[:, :, :]
+            elif cond1 and not cond2:
+                img0_scale = img0_scale[:, left_move:-right_move, :]
+                img1_scale = img1_scale[:, left_move:-right_move, :]
+            elif not cond1 and cond2:
+                img0_scale = img0_scale[up_move:-down_move, :, :]
+                img1_scale = img1_scale[up_move:-down_move, :, :]
+            else:
+                img0_scale = img0_scale[up_move:-down_move, left_move:-right_move, :]
+                img1_scale = img1_scale[up_move:-down_move, left_move:-right_move, :]
+            # print "cropping"
+            # print img0_scale.shape
+            # print img1_scale.shape
+            img0List.append(np.expand_dims(img0_scale, 0))
+            img1List.append(np.expand_dims(img1_scale, 0))
+
+        elif scale_ratio < 1.0:
+            img0_scale = cv2.resize(img0, (scaled_width, scaled_height))
+            img1_scale = cv2.resize(img1, (scaled_width, scaled_height))
+            if (width - scaled_width) % 2 == 0:
+                left_move = (width - scaled_width) / 2 
+                right_move = left_move
+            else:
+                left_move = (width - scaled_width - 1) / 2 
+                right_move = left_move + 1
+            if (height - scaled_height) % 2 == 0:
+                up_move = (height - scaled_height) / 2 
+                down_move = up_move
+            else:
+                up_move = (height - scaled_height - 1) / 2 
+                down_move = up_move + 1
+
+            img0_scale = cv2.copyMakeBorder(img0_scale,up_move,down_move,left_move,right_move,cv2.BORDER_CONSTANT,value=0)       # top, bottom, left, right
+            img1_scale = cv2.copyMakeBorder(img1_scale,up_move,down_move,left_move,right_move,cv2.BORDER_CONSTANT,value=0)
+            print "padding"
+            print img0_scale.shape
+            print img1_scale.shape 
+            img0List.append(np.expand_dims(img0_scale, 0))
+            img1List.append(np.expand_dims(img1_scale, 0))
+
+        else:
+            img0List.append(np.expand_dims(img0, 0))
+            img1List.append(np.expand_dims(img1, 0))
+        
+
+        # rotation
+        rotation_ratio = np.random.uniform(low=-17, high=17, size=1)
+        center = (width / 2, height / 2)
+        M = cv2.getRotationMatrix2D(center, rotation_ratio, 1.0)
+        rotated_img0 = cv2.warpAffine(img0, M, (width, height))
+        rotated_img1 = cv2.warpAffine(img1, M, (width, height))
+        img0List.append(np.expand_dims(rotated_img0, 0))
+        img1List.append(np.expand_dims(rotated_img1, 0))
+        # print rotated_img0.shape
+        # print rotated_img1.shape 
+
+    return np.concatenate(img0List, axis=0), np.concatenate(img1List, axis=0)
+
+
 def flowToColor(flow):
 	UNKNOWN_FLOW_THRESH = 1e9;
 	UNKNOWN_FLOW = 1e10;            
