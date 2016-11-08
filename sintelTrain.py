@@ -10,7 +10,7 @@ import math
 import utils as utils
 
 
-tf.app.flags.DEFINE_string('train_log_dir', '/tmp/sintel_3d/',
+tf.app.flags.DEFINE_string('train_log_dir', '/tmp/sintel_3d_v2/',
                     'Directory where to write event logs.')
 
 tf.app.flags.DEFINE_integer('batch_size', 4, 'The number of images in each batch.')
@@ -28,7 +28,7 @@ tf.app.flags.DEFINE_float('learning_rate', 0.000016, 'The learning rate')
 tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.5,
                    """Learning rate decay factor.""")
 
-tf.app.flags.DEFINE_float('num_epochs_per_decay', 30,
+tf.app.flags.DEFINE_float('num_epochs_per_decay', 60,
                    """Number of epochs after which learning rate decays.""")
 
 tf.app.flags.DEFINE_string('master', 'local',
@@ -41,18 +41,19 @@ class train:
     '''Pipeline for training
     '''
 
-    def __init__(self, data_path, image_size, split, time_step, passKey):
+    def __init__(self, data_path, image_size, time_step, passKey):
         self.image_size = image_size
         self.origin_size = [436, 1024]
         self.time_step = time_step
+        self.amplifier = 3
         self.numLosses = 6
         self.epsilon = 0.0001
         self.alpha_c = 0.3
         self.alpha_s = 0.3
-        self.lambda_smooth = 0.2
-        self.sintel = sintelLoader(data_path, image_size, split, self.time_step, passKey)
+        self.lambda_smooth = 0
+        self.sintel = sintelLoader(data_path, image_size, self.time_step, passKey)
         self.batch_size = FLAGS.batch_size
-        self.maxEpochs = 180
+        self.maxEpochs = 400
         self.maxIterPerEpoch = int(math.floor(len(self.sintel.trainList)/self.batch_size))
 
         self.trainNet(self.batch_size)
@@ -99,13 +100,16 @@ class train:
         if not os.path.isdir(FLAGS.train_log_dir):
             os.makedirs(FLAGS.train_log_dir, mode=0777)
 
-        with tf.device('/gpu:1'):
-            source_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3*(self.time_step-1)])
-            target_img = tf.placeholder(tf.float32, [self.batch_size, self.image_size[0], self.image_size[1], 3*(self.time_step-1)])
+        # Figure out the input size
+        inputData, flow = self.sintel.sampleTrain(self.batch_size)
+        shape_info = inputData.shape
+
+        with tf.device('/gpu:0'):
+            inputVolume = tf.placeholder(tf.float32, [shape_info[0], shape_info[1], shape_info[2], shape_info[3]])
             loss_weight = tf.placeholder(tf.float32, [self.numLosses])
             hyper_param = tf.placeholder(tf.float32, [4])
             is_training = tf.placeholder(tf.bool)
-            loss, midFlows, previous = sintelWrapFlow.inception_v3(source_img, target_img, loss_weight, hyper_param, is_training)
+            loss, midFlows, previous = sintelWrapFlow.inception_v3(inputVolume, loss_weight, hyper_param, is_training)
             print('Finished building Network.')
 
             # Calculating the number of params inside a network
@@ -183,15 +187,15 @@ class train:
                 # 227 max iterations
                 # print self.maxIterPerEpoch
                 for iteration in xrange(1, self.maxIterPerEpoch+1):
-                    source, target, flow = self.sintel.sampleTrain(self.batch_size)  
+                    inputData, _ = self.sintel.sampleTrain(self.batch_size)  
                     
                     # Geometric augmentation
                     # source_geo, target_geo = utils.geoAugmentation(source, target)
                     # Training
-                    train_op.run(feed_dict = {source_img: source, target_img: target, loss_weight: weight_L, hyper_param: hyper_param_list, learning_rate: lr}, session = sess)
+                    train_op.run(feed_dict = {inputVolume: inputData, loss_weight: weight_L, hyper_param: hyper_param_list, learning_rate: lr}, session = sess)
                     
                     if iteration % display == 0:
-                        losses, flows_all, loss_sum = sess.run([loss, midFlows, total_loss], feed_dict={source_img: source, target_img: target, loss_weight: weight_L, hyper_param: hyper_param_list, is_training: False})
+                        losses, flows_all, loss_sum = sess.run([loss, midFlows, total_loss], feed_dict={inputVolume: inputData, loss_weight: weight_L, hyper_param: hyper_param_list, is_training: False})
                 
                         print("---Train Batch(%d): Epoch %03d Iter %04d: Loss_sum %4.4f \r\n" % (self.batch_size, epoch, iteration, loss_sum))
                         print("          PhotometricLoss1 = %4.4f (* %2.4f = %2.4f loss)" % (losses[0]["Charbonnier_reconstruct"], weight_L[0], losses[0]["Charbonnier_reconstruct"] * weight_L[0]))
@@ -214,7 +218,7 @@ class train:
                         print("          SmoothnessLossV6 = %4.4f (* %2.4f = %2.4f loss)" % (losses[5]["V_loss"], weight_L[5]*self.lambda_smooth, losses[5]["V_loss"] * weight_L[5]*self.lambda_smooth))
 
                         assert not np.isnan(loss_sum).any(), 'Model diverged with loss = NaN'
-                    if iteration == 1:#self.maxIterPerEpoch:   
+                    if iteration == self.maxIterPerEpoch:   
                         print("Start evaluating......")
                         # self.evaluateNet(epoch, iteration, weight_L, hyper_param_list, sess)
                         testBatchSize = self.batch_size
@@ -228,9 +232,9 @@ class train:
                         # print weight_L
                         for testIter in xrange(1, maxTestIter+1):
                             testBatch = self.sintel.sampleVal(testBatchSize, testIter)
-                            source, target, flow = testBatch[0]
-                            imgPath = testBatch[1][0]
-                            losses, flows_all, prev_all = sess.run([loss, midFlows, previous], feed_dict={source_img: source, target_img: target, loss_weight: weight_L, hyper_param: hyper_param_list, is_training: False})
+                            inputData, flow = testBatch[0]
+                            batchSampleIdxs = testBatch[1]
+                            losses, flows_all, prev_all = sess.run([loss, midFlows, previous], feed_dict={inputVolume: inputData, loss_weight: weight_L, hyper_param: hyper_param_list, is_training: False})
                             Loss1 += losses[0]["total"]
                             Loss2 += losses[1]["total"]
                             Loss3 += losses[2]["total"]
@@ -249,51 +253,58 @@ class train:
                             V_Loss4 += losses[3]["V_loss"]
                             V_Loss5 += losses[4]["V_loss"]
                             U_Loss6 += losses[5]["V_loss"]
-
                             
                             flow1_pacth = []
                             previous_img_list = []
                             for batch_idx in xrange(testBatchSize):
+                                # For flow
                                 flow1_list = []
                                 for c in xrange(0, (self.time_step-1)*2, 2):
                                     idx1, idx2 = c, c+2
-                                    flowImg = flows_all[0][batch_idx,:,:,idx1:idx2]*2       # pr1 is still half of the final predicted flow value
-                                    flowImg = np.clip(flowImg, -248.968, 333.623)       # 300 and 250 is the min and max of the flow value in training dataset
+                                    flowImg = flows_all[0][batch_idx,:,:,idx1:idx2]*self.amplifier       # pr1 is still half of the final predicted flow value
+                                    flowImg = np.clip(flowImg, -420.621, 426.311)       # -420.621 426.311 is the min and max of the flow value in training dataset
                                     # print flowImg.shape
                                     flow1_list.append(np.expand_dims(cv2.resize(flowImg, (self.origin_size[1], self.origin_size[0])), 0))
-                                    previous_img_list.append(np.expand_dims(cv2.resize(prev_all[batch_idx,:,:,0:3], (self.origin_size[1], self.origin_size[0])), 0))
                                 flow1_pacth.append(np.concatenate(flow1_list, axis=3))
+                                # print flow1_pacth[0].shape
+                                # # For reconstructed images
+                                # img1_list = []
+                                # for c in xrange(0, (self.time_step-1)*3, 3):
+                                #     idx1, idx2 = c, c+3
+                                #     img1_list.append(np.expand_dims(cv2.resize(prev_all[batch_idx,:,:,idx1:idx2], (self.origin_size[1], self.origin_size[0])), 0))
+                                # previous_img_list.append(np.concatenate(img1_list, axis=3))
+                                # print previous_img_list[0].shape
+
                             flow_1.append(np.concatenate(flow1_pacth, axis=0))
-                            previous_img.append(np.concatenate(previous_img_list, axis=0))
+                            # previous_img.append(np.concatenate(previous_img_list, axis=0))
+                            previous_img.append(prev_all)
                             flow_gt.append(flow)
-                            # print flow_1[0].shape, flow_gt[0].shape
 
                             # Visualize
-                            # if False:
-                            # if iteration % 10 == 0:
-                            if epoch == 1:      # save ground truth images and flow
-                                dirTuple = self.sintel.valList[imgPath][0]
+                            # pickID: pick any frame inside the volume to display
+                            pickID = self.time_step / 2 - 1
+                            for batch_sample_id in batchSampleIdxs:
+                                dirTuple = self.sintel.valList[batch_sample_id][pickID]
                                 dirSplit = dirTuple.split("/")
                                 dirName = dirSplit[0]
                                 frameName = dirSplit[1][0:10]
                                 imgName = dirName + "_" + frameName
-                                
-                                gt_1 = source[0, :, :, 0:3].squeeze()
-                                cv2.imwrite(FLAGS.train_log_dir + imgName + "_1.jpeg", gt_1)
-                                gt_2 = target[0, :, :, 0:3].squeeze()
-                                cv2.imwrite(FLAGS.train_log_dir + imgName + "_2.jpeg", gt_2)
-                                GTflowColor = utils.flowToColor(flow[0,:,:,0:2].squeeze())
-                                cv2.imwrite(FLAGS.train_log_dir + imgName + "_gt_flow.jpeg", GTflowColor)
 
-                            flowColor_1 = utils.flowToColor(flow_1[testIter-1][0,:,:,0:2].squeeze())
-                            # print flowColor.max(), flowColor.min(), flowColor.mean()
-                            cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(testIter) + "_flowColor_1" + ".jpeg", flowColor_1)
+                                if epoch == 1:      # save ground truth images and flow
+                                    GTflowColor = utils.flowToColor(flow[batch_sample_id%self.batch_size, :, :, pickID*2:pickID*2+2].squeeze())
+                                    cv2.imwrite(FLAGS.train_log_dir + imgName + "_gt_flow.jpeg", GTflowColor)
+                                    gt_1 = inputData[batch_sample_id%self.batch_size, :, :, pickID*3:pickID*3+3].squeeze()
+                                    cv2.imwrite(FLAGS.train_log_dir + imgName + ".jpeg", gt_1)
+                                    
+                                flowColor_1 = utils.flowToColor(flow_1[testIter-1][batch_sample_id%self.batch_size,:,:,pickID*2:pickID*2+2].squeeze())
+                                # print flowColor.max(), flowColor.min(), flowColor.mean()
+                                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + imgName + "_flow.jpeg", flowColor_1)
 
-                            prev_frame = previous_img[testIter-1][0,:,:,0:3]
-                            intensity_range = np.max(prev_frame, axis=None) - np.min(prev_frame, axis=None)
-                            # save predicted next frames
-                            prev_frame = (prev_frame - np.min(prev_frame, axis=None)) * 255 / intensity_range
-                            cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + str(testIter) + "_prev_1" + ".jpeg", prev_frame.astype(int))
+                                prev_frame = previous_img[testIter-1][batch_sample_id%self.batch_size,:,:,pickID*3:pickID*3+3]
+                                intensity_range = np.max(prev_frame, axis=None) - np.min(prev_frame, axis=None)
+                                # save predicted next frames
+                                prev_frame = (prev_frame - np.min(prev_frame, axis=None)) * 255 / intensity_range
+                                cv2.imwrite(FLAGS.train_log_dir + str(epoch) + "_" + imgName + ".jpeg", prev_frame.astype(int))
 
                         # Calculate endpoint error
                         f1 = np.concatenate(flow_1, axis=0)

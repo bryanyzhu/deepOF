@@ -340,7 +340,6 @@ def inception_v3_base(inputs,
     return net, end_points
 
 def inception_v3(inputs, 
-                 outputs, 
                  loss_weight,
                  hyper_param,
                  is_training=True,
@@ -348,19 +347,16 @@ def inception_v3(inputs,
                  depth_multiplier=1.0,
                  reuse=None,
                  scope='InceptionV3'):
-
-    # mean = tf.constant([70.1433, 83.1915, 92.8827], dtype=tf.float32, name="img_global_mean")
-    time_step = int(inputs.get_shape()[3]/3) + 1
-    # inputs = inputs - mean
-    # outputs = outputs - mean
-    # Scaling to 0 ~ 1 or -0.4 ~ 0.6?
-    inputs = tf.truediv(inputs, 255.0)
-    outputs = tf.truediv(outputs, 255.0)
-    network_in = tf.concat(3, [inputs, outputs])
+    
+    time_step = int(inputs.get_shape()[3]/3)
+    flow_channels = 2*(time_step-1)
+    mean = tf.tile(tf.constant([70.1433, 83.1915, 92.8827], dtype=tf.float32, name="img_global_mean"), [time_step])
+    
+    inputs = inputs - mean
+    network_in = tf.truediv(inputs, 255.0)
 
     # Add local response normalization (ACROSS_CHANNELS) for computing photometric loss
-    inputs_norm = tf.nn.local_response_normalization(inputs, depth_radius=4, beta=0.7)
-    outputs_norm = tf.nn.local_response_normalization(outputs, depth_radius=4, beta=0.7)
+    inputs_norm = tf.nn.local_response_normalization(network_in, depth_radius=4, beta=0.7)
 
     # end_points will collect relevant activations for external use, for example summaries or losses.
     if depth_multiplier <= 0:
@@ -379,7 +375,7 @@ def inception_v3(inputs,
             alpha_s = hyper_param[2]
             lambda_smooth = hyper_param[3]
             deltaWeights = {}
-            deltaWeights["FlowDeltaWeights"] = tf.constant([0,0,0,0,1,-1,0,0,0,0,0,0,0,1,0,0,-1,0], dtype=tf.float32, shape=[3,3,8,8], name="FlowDeltaWeights")
+            deltaWeights["FlowDeltaWeights"] = tf.constant([0,0,0,0,1,-1,0,0,0,0,0,0,0,1,0,0,-1,0], dtype=tf.float32, shape=[3,3,flow_channels,flow_channels], name="FlowDeltaWeights")
             deltaWeights["ImgDeltaWeights"] = tf.constant([-1,0,1,-2,0,2,-1,0,1,-1,-2,-1,0,0,0,1,2,1], dtype=tf.float32, shape=[3,3,1,2], name="ImgDeltaWeights")
             # deltaWeights["mean"] = mean
             scale = 2       # for deconvolution
@@ -391,9 +387,8 @@ def inception_v3(inputs,
                 h6 = pr6.get_shape()[1].value
                 w6 = pr6.get_shape()[2].value
                 pr6_input = tf.image.resize_bilinear(inputs_norm, [h6, w6])
-                pr6_output = tf.image.resize_bilinear(outputs_norm, [h6, w6])
                 flow_scale_6 = 0.625    # (*20/64)
-                loss6, _ = loss_interp_multi(pr6, pr6_input, pr6_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_6, deltaWeights)
+                loss6, _ = loss_interp_multi(pr6, pr6_input, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_6, deltaWeights)
                 upconv5 = slim.conv2d_transpose(end_points["Mixed_7c"], 512, [2*scale, 2*scale], stride=scale, scope='upconv5')
                 pr6to5 = slim.conv2d_transpose(pr6, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr6to5')
                 concat5 = tf.concat(3, [end_points["Mixed_6e"], upconv5, pr6to5])
@@ -402,9 +397,8 @@ def inception_v3(inputs,
                 h5 = pr5.get_shape()[1].value
                 w5 = pr5.get_shape()[2].value
                 pr5_input = tf.image.resize_bilinear(inputs_norm, [h5, w5])
-                pr5_output = tf.image.resize_bilinear(outputs_norm, [h5, w5])
                 flow_scale_5 = 1.25    # (*20/32)
-                loss5, _ = loss_interp_multi(pr5, pr5_input, pr5_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_5, deltaWeights)
+                loss5, _ = loss_interp_multi(pr5, pr5_input, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_5, deltaWeights)
                 upconv4 = slim.conv2d_transpose(concat5, 256, [2*scale, 2*scale], stride=scale, scope='upconv4')
                 pr5to4 = slim.conv2d_transpose(pr5, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr5to4')
                 concat4 = tf.concat(3, [end_points["Mixed_5d"], upconv4, pr5to4])
@@ -413,9 +407,8 @@ def inception_v3(inputs,
                 h4 = pr4.get_shape()[1].value
                 w4 = pr4.get_shape()[2].value
                 pr4_input = tf.image.resize_bilinear(inputs_norm, [h4, w4])
-                pr4_output = tf.image.resize_bilinear(outputs_norm, [h4, w4])
                 flow_scale_4 = 2.5    # (*20/16)
-                loss4, _ = loss_interp_multi(pr4, pr4_input, pr4_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_4, deltaWeights)
+                loss4, _ = loss_interp_multi(pr4, pr4_input, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_4, deltaWeights)
                 scale = 1
                 upconv3 = slim.conv2d_transpose(concat4, 128, [2*scale, 2*scale], stride=scale, scope='upconv3')
                 pr4to3 = slim.conv2d_transpose(pr4, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr4to3')
@@ -426,9 +419,8 @@ def inception_v3(inputs,
                 h3 = pr3.get_shape()[1].value
                 w3 = pr3.get_shape()[2].value
                 pr3_input = tf.image.resize_bilinear(inputs_norm, [h3, w3])
-                pr3_output = tf.image.resize_bilinear(outputs_norm, [h3, w3])
                 flow_scale_3 = 2.5    # (*20/8)
-                loss3, _ = loss_interp_multi(pr3, pr3_input, pr3_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_3, deltaWeights)
+                loss3, _ = loss_interp_multi(pr3, pr3_input, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_3, deltaWeights)
                 upconv2 = slim.conv2d_transpose(concat3, 64, [2*scale, 2*scale], stride=scale, scope='upconv2')
                 pr3to2 = slim.conv2d_transpose(pr3, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr3to2')
                 concat2 = tf.concat(3, [end_points["MaxPool_3a_3x3"], upconv2, pr3to2])
@@ -437,9 +429,8 @@ def inception_v3(inputs,
                 h2 = pr2.get_shape()[1].value
                 w2 = pr2.get_shape()[2].value
                 pr2_input = tf.image.resize_bilinear(inputs_norm, [h2, w2])
-                pr2_output = tf.image.resize_bilinear(outputs_norm, [h2, w2])
                 flow_scale_2 = 5.0    # (*20/4)
-                loss2, _ = loss_interp_multi(pr2, pr2_input, pr2_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_2, deltaWeights)
+                loss2, _ = loss_interp_multi(pr2, pr2_input, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_2, deltaWeights)
                 upconv1 = slim.conv2d_transpose(concat2, 32, [2*scale, 2*scale], stride=scale, scope='upconv1')
                 pr2to1 = slim.conv2d_transpose(pr2, 2, [2*scale, 2*scale], stride=scale, activation_fn=None, scope='up_pr2to1')
                 concat1 = tf.concat(3, [end_points["Conv2d_1a_3x3"], upconv1, pr2to1])
@@ -448,9 +439,8 @@ def inception_v3(inputs,
                 h1 = pr1.get_shape()[1].value
                 w1 = pr1.get_shape()[2].value
                 pr1_input = tf.image.resize_bilinear(inputs_norm, [h1, w1])
-                pr1_output = tf.image.resize_bilinear(outputs_norm, [h1, w1])
                 flow_scale_1 = 10.0    # (*20/2) 
-                loss1, prev1 = loss_interp_multi(pr1, pr1_input, pr1_output, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_1, deltaWeights)
+                loss1, prev1 = loss_interp_multi(pr1, pr1_input, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale_1, deltaWeights)
                 
                 # Adding intermediate losses
                 all_loss = loss_weight[0]*loss1["total"] + loss_weight[1]*loss2["total"] + loss_weight[2]*loss3["total"] + \
@@ -499,7 +489,7 @@ def inception_v3_arg_scope(weight_decay=0.00004,
                     normalizer_params=batch_norm_params) as sc:
             return sc
 
-def loss_interp_multi(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale, deltaWeights):
+def loss_interp_multi(flows, inputs, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale, deltaWeights):
 
     shape = inputs.get_shape()
     shape = [int(dim) for dim in shape]
@@ -507,7 +497,6 @@ def loss_interp_multi(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_
     height = shape[1]
     width = shape[2]
     channels = shape[3]
-    # print num_batch, height, width, channels
 
     needMask = True
     # Create border mask for image
@@ -517,8 +506,8 @@ def loss_interp_multi(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_
     smallerMask = tf.ones([height-2*borderWidth, width-2*borderWidth])
     borderMask = tf.pad(smallerMask, [[borderWidth,borderWidth], [borderWidth,borderWidth]], "CONSTANT")
     borderMask = tf.tile(tf.expand_dims(borderMask, 0), [num_batch, 1, 1])
-    borderMaskImg = tf.tile(tf.expand_dims(borderMask, 3), [1, 1, 1, channels])
-    borderMaskFlow = tf.tile(tf.expand_dims(borderMask, 3), [1, 1, 1, channels/3*2])
+    borderMaskImg = tf.tile(tf.expand_dims(borderMask, 3), [1, 1, 1, channels-3])
+    borderMaskFlow = tf.tile(tf.expand_dims(borderMask, 3), [1, 1, 1, channels/3*2-2])
 
     # Create smoothness border mask for optical flow
     smallerSmoothMaskx = tf.ones([height-1, width])
@@ -526,14 +515,13 @@ def loss_interp_multi(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_
     smoothnessMaskx = tf.pad(smallerSmoothMaskx, [[0,1], [0,0]], "CONSTANT")    # vertical
     smoothnessMasky = tf.pad(smallerSmoothMasky, [[0,0], [0,1]], "CONSTANT")    # horizontal
     smoothnessMask = tf.pack([smoothnessMasky, smoothnessMaskx], axis=2)
-    smoothnessMask = tf.tile(tf.expand_dims(smoothnessMask, 0), [num_batch, 1, 1, num_batch])
+    smoothnessMask = tf.tile(tf.expand_dims(smoothnessMask, 0), [num_batch, 1, 1, channels/3-1])
 
     inputs_flat = tf.reshape(inputs, [num_batch, -1, channels])
-    outputs_flat = tf.reshape(outputs, [num_batch, -1, channels])
-    borderMask_flat = tf.reshape(borderMaskImg, [num_batch, -1, channels])
+    borderMask_flat = tf.reshape(borderMaskImg, [num_batch, -1, channels-3])
 
     flows = tf.mul(flows, flow_scale)
-    flows_flat = tf.reshape(flows, [num_batch, -1, channels/3*2])
+    flows_flat = tf.reshape(flows, [num_batch, -1, channels/3*2-2])
     floor_flows = tf.to_int32(tf.floor(flows_flat))
     weights_flows = flows_flat - tf.floor(flows_flat)
 
@@ -550,8 +538,7 @@ def loss_interp_multi(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_
     batch = []
     for b in xrange(num_batch):
         channel = []
-        
-        for c in xrange(channels):
+        for c in xrange(channels-3):
             
             idx1, idx2 = 2*(c/3), 2*(c/3)+1
 
@@ -575,10 +562,10 @@ def loss_interp_multi(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_
             idx_c = y0 * width + x1
             idx_d = y1 * width + x1
 
-            Ia = tf.gather(outputs_flat[b, :, c], idx_a)
-            Ib = tf.gather(outputs_flat[b, :, c], idx_b)
-            Ic = tf.gather(outputs_flat[b, :, c], idx_c)
-            Id = tf.gather(outputs_flat[b, :, c], idx_d)
+            Ia = tf.gather(inputs_flat[b, :, c+3], idx_a)
+            Ib = tf.gather(inputs_flat[b, :, c+3], idx_b)
+            Ic = tf.gather(inputs_flat[b, :, c+3], idx_c)
+            Id = tf.gather(inputs_flat[b, :, c+3], idx_d)
 
             wa = (1-xw) * (1-yw)
             wb = (1-xw) * yw
@@ -591,7 +578,8 @@ def loss_interp_multi(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_
     reconstructs = tf.pack(batch)
     
     # Recostruction loss
-    diff_reconstruct = tf.scalar_mul(255.0, tf.sub(reconstructs, inputs_flat))
+    # print reconstructs.get_shape()
+    diff_reconstruct = tf.scalar_mul(255.0, tf.sub(reconstructs, inputs_flat[:,:,:channels-3]))
     eleWiseLoss = tf.pow(tf.square(diff_reconstruct) + tf.square(epsilon), alpha_c)
     
     # # add image gradients
@@ -639,7 +627,7 @@ def loss_interp_multi(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_
     lossDict["Charbonnier_reconstruct"] = Charbonnier_reconstruct
     lossDict["U_loss"] = U_loss
     lossDict["V_loss"] = V_loss
-    return lossDict, tf.reshape(reconstructs, [num_batch, height, width, channels])
+    return lossDict, tf.reshape(reconstructs, [num_batch, height, width, channels-3])
 
 def loss_interp(flows, inputs, outputs, epsilon, alpha_c, alpha_s, lambda_smooth, flow_scale, deltaWeights):
 

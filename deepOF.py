@@ -10,12 +10,11 @@ def deepOF(data_path):
 	flyingChairs = False
 
 	if MPISintel:
-		time_step = 5
+		time_step = 10
 		image_size = [256, 512]
 		crop_size = [224, 480]
-		split = 0.8
 		passKey = 'final'		# clean or final
-		train(data_path, image_size, split, time_step, passKey)
+		train(data_path, image_size, time_step, passKey)
 	elif ucf101:
 		image_size = [320, 384]
 		train(data_path, image_size)
