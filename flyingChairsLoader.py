@@ -55,7 +55,9 @@ class flyingChairsLoader:
         return train, val
 
     def sampleTrain(self, batch_size, batch_id):
+    # def sampleTrain(self, batch_size):
         assert batch_size > 0, 'we need a batch size larger than 0'
+        # batchSampleIdxs = np.random.choice(len(self.trainList), batch_size)
         batchSampleIdxs = xrange((batch_id-1)*batch_size, batch_id*batch_size)
         return self.hookTrainData(batchSampleIdxs)
 
