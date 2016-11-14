@@ -5,11 +5,15 @@ from trainOF import train
 def main():
 	"""
 	Example usage: 
-	python deepOF.py flyingChairs ~/Documents/FlyingChairs_release/ 4 0.000016 0.5 18 18 /tmp/integrate_v1/
+	python deepOF.py flyingChairs ~/Documents/FlyingChairs_release/ False VGG16 4 0.000016 0.5 1 1 /tmp/integrate_v1/
+	python deepOF.py MPI-Sintel ~/Documents/MPI-Sintel/ True VGG16 4 0.000016 0.5 1 1 /tmp/integrate_v1/
+	python deepOF.py ucf101 ~/Documents/UCF101/ True VGG16 4 0.000016 0.5 1 1 /tmp/integrate_v1/
 	"""
 	parser = argparse.ArgumentParser(description='Unsupervised motion estimation from videos.')
 	parser.add_argument('dataset', type=str, help='Dataset name.')
 	parser.add_argument('data_path', type=str, help='Path to your data.')
+	parser.add_argument('is_crop', type=bool, help='Crop the image or not.')
+	parser.add_argument('model_name', type=str, help='Model architecture.')
 	parser.add_argument('batch_size', type=int, help='The number of images in each batch.')
 	parser.add_argument('learning_rate', type=float, help='The initial learning rate.')
 	parser.add_argument('lr_decay', type=float, help='Learning rate decay factor.')
@@ -21,6 +25,8 @@ def main():
 	opts = {}
 	opts["dataset"] = args.dataset
 	opts["data_path"] = args.data_path
+	opts["is_crop"] = args.is_crop
+	opts["model_name"] = args.model_name
 	opts["batch_size"] = args.batch_size
 	opts["learning_rate"] = args.learning_rate
 	opts["lr_decay"] = args.lr_decay

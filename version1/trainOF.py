@@ -1,11 +1,15 @@
 import os,sys
+sys.path.append('./loader')
+sys.path.append('./model')
+sys.path.append('./utils')
+
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 import numpy as np
 import random
 import cv2
 import time
-import warpflow
+
 import utils as utils
 from testOF import test
 
@@ -23,7 +27,7 @@ class train:
         elif opts["dataset"] == "ucf101":
             from ucf101Loader import loader
         else:
-            print("No such dataset loader yet. ")
+            print("No %s dataset loader yet. " % (opts["dataset"]))
             sys.exit()
 
         self.loader = loader(opts)
@@ -37,9 +41,7 @@ class train:
 
         # Hyper params for computing loss
         self.mean = self.loader.mean    # Samples image mean in that dataset
-        self.weight_L = [7,5,3,3,1]    # Loss weights schedule
-        self.numLosses = len(self.weight_L) 
-
+        # The following params are different for different datasets, you should set it up   
         lambda_smooth = 1.0
         epsilon = 0.0001 
         alpha_c = 0.25
@@ -70,8 +72,22 @@ class train:
 
     def trainNet(self, opts, hyper_params):
 
-        if not os.path.isdir(opts["log_dir"]):
-            os.makedirs(opts["log_dir"], mode=0777)
+        # Choose the network
+        if opts["model_name"] == "VGG16":
+            from VGG16 import model
+            weight_L = [7,5,3,3,1]    
+            numLosses = len(weight_L) 
+        elif opts["model_name"] == "Flownet":
+            from Flownet import model
+            weight_L = [9,7,5,3,3,1]    
+            numLosses = len(weight_L) 
+        elif opts["model_name"] == "Inception_v3":
+            from Inception_v3 import model
+            weight_L = [9,7,5,3,3,1]    
+            numLosses = len(weight_L) 
+        else:
+            print("No %s network architecture yet. " % (opts["model_name"]))
+            sys.exit()
 
         # Figure out the dimension information
         source, target, _ = self.loader.sampleTrain(opts["batch_size"])
@@ -82,16 +98,16 @@ class train:
             source_imgs = tf.placeholder(tf.float32, [dimen_info[0], dimen_info[1], dimen_info[2], dimen_info[3]])
             target_imgs = tf.placeholder(tf.float32, [dimen_info[0], dimen_info[1], dimen_info[2], dimen_info[3]])
             sample_mean = tf.placeholder(tf.float32, [len(self.mean)])
-            loss_weight = tf.placeholder(tf.float32, [self.numLosses])
+            loss_weight = tf.placeholder(tf.float32, [numLosses])
             params = tf.placeholder(tf.float32, [len(hyper_params)])
             is_training = tf.placeholder(tf.bool, [])
-            loss, midFlows, previous = warpflow.VGG16(source_imgs, 
-                                                      target_imgs, 
-                                                      sample_mean, 
-                                                      loss_weight, 
-                                                      params, 
-                                                      is_training)
-            print('Finished building Network.')
+            loss, midFlows, previous = model(source_imgs, 
+                                            target_imgs, 
+                                            sample_mean, 
+                                            loss_weight, 
+                                            params, 
+                                            is_training)
+            print('Finished building %s Network.' % (opts["model_name"]))
 
             # Calculating the number of params inside a network
             model_vars = tf.trainable_variables()
@@ -105,7 +121,7 @@ class train:
                 for dim in shape:
                     variable_parametes *= dim.value
                 total_parameters += variable_parametes
-            print("Our network has %4.2fM number of parameters. " % (total_parameters/1000000.0))
+            print("The %s network has %4.2fM number of parameters. " % (opts["model_name"], total_parameters/1000000.0))
 
             # Construct the train_op
             total_loss = slim.losses.get_total_loss(add_regularization_losses=False)
@@ -135,6 +151,9 @@ class train:
             if ckpt and ckpt.model_checkpoint_path:
                 print("Restore from " +  ckpt.model_checkpoint_path)
                 saver.restore(sess, ckpt.model_checkpoint_path)
+
+            if not os.path.isdir(opts["log_dir"]):
+                os.makedirs(opts["log_dir"], mode=0777)
             
             # Training starts...
             display = self.display     
@@ -150,7 +169,7 @@ class train:
                     train_op.run(feed_dict = {source_imgs: source, 
                                               target_imgs: target, 
                                               sample_mean: self.mean, 
-                                              loss_weight: self.weight_L,
+                                              loss_weight: weight_L,
                                               params: hyper_params,
                                               is_training: True, 
                                               learning_rate: lr}, session = sess)
@@ -160,32 +179,33 @@ class train:
                                  feed_dict = {source_imgs: source, 
                                               target_imgs: target,
                                               sample_mean: self.mean, 
-                                              loss_weight: self.weight_L,
+                                              loss_weight: weight_L,
                                               params: hyper_params,
                                               is_training: False})
 
                         # Print training logs
-                        assert len(losses) == self.numLosses, "We got different number of intermediate losses!"
+                        assert len(losses) == numLosses, "We got different number of intermediate losses!"
                         print("Train Batch(%d): Epoch %03d Iter %04d: Loss_sum %4.4f \r\n" 
                             % (opts["batch_size"], epoch, iteration, loss_sum))
-                        for loss_idx in xrange(self.numLosses):
+                        for loss_idx in xrange(numLosses):
                             print("    PhotometricLoss%d = %4.4f (* %2.4f = %2.4f loss)" 
-                                % (loss_idx+1, losses[loss_idx]["Charbonnier_reconstruct"], self.weight_L[loss_idx], losses[loss_idx]["Charbonnier_reconstruct"] * self.weight_L[loss_idx]))
-                        for loss_idx in xrange(self.numLosses):
+                                % (loss_idx+1, losses[loss_idx]["Charbonnier_reconstruct"], weight_L[loss_idx], losses[loss_idx]["Charbonnier_reconstruct"] * weight_L[loss_idx]))
+                        for loss_idx in xrange(numLosses):
                             print("    SmoothnessLossU%d = %4.4f (* %2.4f = %2.4f loss)" 
-                                % (loss_idx+1, losses[loss_idx]["U_loss"], self.weight_L[loss_idx]*hyper_params[0], losses[loss_idx]["U_loss"] * self.weight_L[loss_idx]*hyper_params[0]))
-                        for loss_idx in xrange(self.numLosses):
+                                % (loss_idx+1, losses[loss_idx]["U_loss"], weight_L[loss_idx]*hyper_params[0], losses[loss_idx]["U_loss"] * weight_L[loss_idx]*hyper_params[0]))
+                        for loss_idx in xrange(numLosses):
                             print("    SmoothnessLossV%d = %4.4f (* %2.4f = %2.4f loss)" 
-                                % (loss_idx+1, losses[loss_idx]["V_loss"], self.weight_L[loss_idx]*hyper_params[0], losses[loss_idx]["V_loss"] * self.weight_L[loss_idx]*hyper_params[0]))
+                                % (loss_idx+1, losses[loss_idx]["V_loss"], weight_L[loss_idx]*hyper_params[0], losses[loss_idx]["V_loss"] * weight_L[loss_idx]*hyper_params[0]))
                         
                         assert not np.isnan(loss_sum).any(), 'Model diverged with loss = NaN'
                     
                     # Evaluation
                     if iteration == self.test_interval:   
                         print("Start evaluating ......")
-                        test(opts, epoch, self.weight_L, hyper_params, sess, self.loader, 
+                        test(opts, epoch, weight_L, hyper_params, sess, self.loader, 
                             loss, midFlows, previous, source_imgs, target_imgs, sample_mean, loss_weight, params, is_training)
                 
+                # TODO: should change from epoch to iterations. For ucf101, we don't need to train many epochs
                 # Decay the learning rate
                 if epoch % opts["num_epochs_per_decay"] == 0:
                     lr *= opts["lr_decay"]
